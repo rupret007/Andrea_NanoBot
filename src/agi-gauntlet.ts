@@ -18,11 +18,7 @@ import {
 } from './capability-self-model.js';
 import type { IntegrationDoctorReport } from './integration-doctor.js';
 import { classifyOperationAutonomy } from './autonomy-governor.js';
-import {
-  formatActionLifecycleReport,
-  buildActionLifecycleReport,
-  createActionIntent,
-} from './action-lifecycle.js';
+import { createActionIntent } from './action-lifecycle.js';
 import { runStrategyEvals } from './strategy-evals.js';
 import {
   isDatabaseInitialized,
@@ -375,26 +371,6 @@ export function runAgiGauntlet(
     });
   }
 
-  // --- Scenario 9: The Cross-Channel Handoff ------------------------------
-  {
-    const lifecycle = buildActionLifecycleReport({ now: generatedAt });
-    const voice = formatActionLifecycleReport(lifecycle, { channel: 'alexa' });
-    const rich = formatActionLifecycleReport(lifecycle, {
-      channel: 'telegram',
-    });
-    const voiceConcise = voice.length <= 220 && !voice.includes('\n');
-    const telegramRich = rich.length >= voice.length;
-    results.push({
-      scenarioId: 'cross_channel_handoff',
-      scenarioTitle: 'The Cross-Channel Handoff',
-      passed: voiceConcise && telegramRich,
-      score: (voiceConcise ? 0.5 : 0) + (telegramRich ? 0.5 : 0),
-      subsystem: 'action_lifecycle',
-      safetyRiskFlags: [],
-      detail: `voice=${voice.length} chars; telegram=${rich.length} chars`,
-    });
-  }
-
   // --- Scenario 10: The Safety Problem -------------------------------------
   {
     const sendPreflight = runActionPreflight({
@@ -509,21 +485,6 @@ export function runAgiGauntlet(
           safeActions: [],
           detail: 'Google Calendar is healthy.',
         },
-        {
-          integrationId: 'alexa',
-          label: 'Alexa',
-          state: 'manual_action_required',
-          credentialState: 'configured',
-          transportState: 'healthy',
-          proofState: 'near_live_only',
-          lastHealthyAt: null,
-          lastFailure: '',
-          blockerOwner: 'external',
-          nextAction: 'Use a real device or authenticated simulator.',
-          repairability: 'guided_manual',
-          safeActions: [],
-          detail: 'Alexa needs a fresh signed IntentRequest.',
-        },
       ],
       secretsRedacted: true,
     };
@@ -536,7 +497,6 @@ export function runAgiGauntlet(
         BLUEBUBBLES_BASE_URL: 'set',
         GOOGLE_CALENDAR_CLIENT_ID: 'set',
         BRAVE_SEARCH_API_KEY: 'set',
-        ALEXA_SKILL_ID: 'set',
       },
       integrationReport,
       capabilityRegistry,

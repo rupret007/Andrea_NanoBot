@@ -177,7 +177,7 @@ import {
 } from './calendar-research-sequencing.js';
 import { resolveExplicitResearchPersonalContextMode } from './research-orchestrator.js';
 import { buildAndreaPlatformConfigSnapshots } from './assistant-profile-pack.js';
-import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
+import { completeAssistantAction } from './assistant-action-completion.js';
 import {
   continueAssistantCapabilityFromPriorSubjectData,
   matchAssistantCapabilityRequest,
@@ -210,9 +210,9 @@ import {
   startPilotJourney,
 } from './pilot-mode.js';
 import {
-  resolveAlexaConversationFollowup,
-  type AlexaConversationState,
-} from './alexa-conversation.js';
+  resolveAssistantConversationFollowup,
+  type AssistantConversationState,
+} from './assistant-conversation.js';
 import {
   buildCalendarCompanionEventReply,
   buildCalendarCompanionFailureReply,
@@ -486,7 +486,7 @@ import {
   formatAmazonBusinessStatusMessage,
   getAmazonBusinessStatus,
 } from './amazon-business.js';
-import { seedConfiguredAlexaLinkedAccount } from './alexa-identity.js';
+
 import {
   approveAmazonPurchaseRequest,
   cancelAmazonPurchaseRequest,
@@ -861,7 +861,6 @@ import {
 } from './runtime-chat-context.js';
 import { deliverRuntimeCardNotification } from './runtime-card-delivery.js';
 import {
-  ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
   AMAZON_STATUS_COMMANDS,
   CURSOR_ARTIFACTS_COMMANDS,
@@ -2737,7 +2736,7 @@ async function applyAndPresentActionBundle(params: {
       channel: conversationChannel,
       chatJid: params.chatJid,
       currentTime: params.now,
-      resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+      resolveTelegramMainChat: resolveTelegramMainChatForHandoff,
       resolveBlueBubblesCompanionChat: resolveBlueBubblesCompanionChat,
       resolveHandoffTarget: resolveCompanionHandoffTarget,
       sendTelegramMessage: sendCompanionHandoffMessageToChannel,
@@ -2833,11 +2832,7 @@ async function applyAndPresentMessageAction(params: {
   const channel = findChannel(channels, params.chatJid);
   if (!group || !channel) return false;
   const conversationChannel =
-    channel.name === 'bluebubbles'
-      ? 'bluebubbles'
-      : channel.name === 'telegram'
-        ? 'telegram'
-        : 'alexa';
+    channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
   const action = getMessageAction(params.messageActionId);
   const messagesHistoryChannel = channels.find(
     (candidate) =>
@@ -3278,7 +3273,7 @@ function formatCalendarPanelText(title: string, body: string): string {
 function resolveConversationalChannelForChannelName(
   channelName: string,
 ): ConversationalChannel {
-  if (channelName === 'bluebubbles' || channelName === 'alexa') {
+  if (channelName === 'bluebubbles') {
     return channelName;
   }
   return 'telegram';
@@ -4651,7 +4646,7 @@ function listProcessableCompanionChatJids(): string[] {
   );
 }
 
-let resolveTelegramMainChatForAlexa = (_groupFolder: string) =>
+let resolveTelegramMainChatForHandoff = (_groupFolder: string) =>
   undefined as { chatJid: string } | undefined;
 let resolveBlueBubblesCompanionChat = (_groupFolder: string) =>
   undefined as { chatJid: string } | undefined;
@@ -4661,7 +4656,7 @@ let resolveCompanionHandoffTarget = (
 ) =>
   targetChannel === 'bluebubbles'
     ? resolveBlueBubblesCompanionChat(groupFolder)
-    : resolveTelegramMainChatForAlexa(groupFolder);
+    : resolveTelegramMainChatForHandoff(groupFolder);
 let sendCompanionHandoffMessageToChannel = async (
   chatJid: string,
   text: string,
@@ -5365,11 +5360,7 @@ async function processClaimedGroupMessages(
             latestUserMessage?.id ||
             `${conversationChannel}:${chatJid}:${now.toISOString()}`,
           channel:
-            String(channel.name) === 'bluebubbles'
-              ? 'bluebubbles'
-              : String(channel.name) === 'alexa'
-                ? 'alexa'
-                : 'telegram',
+            String(channel.name) === 'bluebubbles' ? 'bluebubbles' : 'telegram',
           groupFolder: group.folder,
           text: lastContent,
           requestRoute: requestPolicy.route,
@@ -9529,7 +9520,7 @@ async function processClaimedGroupMessages(
   };
 
   const buildCompletionPilotOutcome = (
-    result: Awaited<ReturnType<typeof completeAssistantActionFromAlexa>>,
+    result: Awaited<ReturnType<typeof completeAssistantAction>>,
   ): {
     outcome: PilotJourneyOutcome;
     blockerClass?: string | null;
@@ -9596,7 +9587,7 @@ async function processClaimedGroupMessages(
       return false;
     }
 
-    const state: AlexaConversationState = {
+    const state: AssistantConversationState = {
       flowKey: sharedSeed.flowKey,
       subjectKind: sharedSeed.subjectKind,
       subjectData: sharedSeed.subjectData || {},
@@ -9604,7 +9595,7 @@ async function processClaimedGroupMessages(
       supportedFollowups: sharedSeed.supportedFollowups || [],
       styleHints: {},
     };
-    const followup = resolveAlexaConversationFollowup(lastContent, state);
+    const followup = resolveAssistantConversationFollowup(lastContent, state);
     if (!followup.ok || !followup.action) {
       return false;
     }
@@ -9627,10 +9618,11 @@ async function processClaimedGroupMessages(
     const pilotRecord = startConversationPilotProof(
       resolveCrossChannelPilotJourney(lastContent),
     );
-    let result: Awaited<ReturnType<typeof completeAssistantActionFromAlexa>>;
+    let result: Awaited<ReturnType<typeof completeAssistantAction>>;
     try {
-      result = await completeAssistantActionFromAlexa(
+      result = await completeAssistantAction(
         {
+          channel: conversationChannel,
           groupFolder: group.folder,
           action: followup.action,
           utterance: followup.text || lastContent,
@@ -9642,7 +9634,7 @@ async function processClaimedGroupMessages(
           now,
         },
         {
-          resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+          resolveTelegramMainChat: resolveTelegramMainChatForHandoff,
           resolveBlueBubblesCompanionChat: resolveBlueBubblesCompanionChat,
           resolveHandoffTarget: resolveCompanionHandoffTarget,
           sendTelegramMessage: sendCompanionHandoffMessageToChannel,
@@ -9847,7 +9839,7 @@ async function processClaimedGroupMessages(
             result.capabilityResult?.trace?.responseSource || 'local_companion',
           traceReason:
             result.capabilityResult?.trace?.reason ||
-            'completed shared capability follow-up through Alexa-style action completion',
+            'completed shared capability follow-up through shared action completion',
           traceNotes: result.capabilityResult?.trace?.notes || [],
           linkedRefs: result.reminderTaskId
             ? {
@@ -10808,7 +10800,7 @@ async function processClaimedGroupMessages(
                 : undefined,
           },
           {
-            resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+            resolveTelegramMainChat: resolveTelegramMainChatForHandoff,
             resolveBlueBubblesCompanionChat: resolveBlueBubblesCompanionChat,
             resolveHandoffTarget: resolveCompanionHandoffTarget,
             sendTelegramMessage: sendCompanionHandoffMessageToChannel,
@@ -13576,7 +13568,6 @@ function buildBlueBubblesPlatformMetadata(
 function emitAndreaPlatformProofTruths(truth: FieldTrialOperatorTruth): void {
   const surfaces: Array<[string, string, FieldTrialSurfaceTruth]> = [
     ['telegram', 'roundtrip', truth.telegram],
-    ['alexa', 'signed_intent', truth.alexa],
     ['bluebubbles', 'same_thread_message_action', truth.bluebubbles],
     ['google_calendar', 'read_write', truth.googleCalendar],
     ['work_cockpit', 'runtime_status', truth.workCockpit],
@@ -13619,14 +13610,12 @@ function emitAndreaPlatformProofTruths(truth: FieldTrialOperatorTruth): void {
       truth.bluebubbles,
       truth.research,
       truth.imageGeneration,
-      truth.alexa,
     ]),
     summary:
-      'Integration registry truth is derived from calendar, messages, Alexa, research, and image-provider proof states.',
+      'Integration registry truth is derived from calendar, messages, research, and image-provider proof states.',
     metadata: compactPlatformStrings({
       googleCalendar: truth.googleCalendar.proofState,
       bluebubbles: truth.bluebubbles.proofState,
-      alexa: truth.alexa.proofState,
       research: truth.research.proofState,
       imageGeneration: truth.imageGeneration.proofState,
     }),
@@ -13712,19 +13701,7 @@ function emitAndreaPlatformTransportTruths(
       }),
     });
   }
-  void emitAndreaPlatformTransportEvent({
-    transportId: 'alexa_public_ingress',
-    transportKind: 'alexa',
-    state: toAndreaPlatformHealthState(truth.alexa.proofState),
-    summary: summarizePlatformProofTruth(truth.alexa),
-    detail:
-      sanitizePlatformControlText(truth.alexa.detail || truth.alexa.blocker) ||
-      null,
-    deliverySemantics: 'signed_https_request',
-    fallbackTarget: 'telegram',
-    blocker: sanitizePlatformControlText(truth.alexa.blocker) || null,
-    nextAction: sanitizePlatformControlText(truth.alexa.nextAction) || null,
-  });
+
   void emitAndreaPlatformTransportEvent({
     transportId: 'research_provider',
     transportKind: 'provider',
@@ -13868,7 +13845,7 @@ async function main(): Promise<void> {
   ): Promise<'confirmed' | 'unverified' | false> => {
     const target =
       targetChannel === 'telegram'
-        ? resolveTelegramMainChatForAlexa('main')
+        ? resolveTelegramMainChatForHandoff('main')
         : resolveBlueBubblesCompanionChat('main');
     if (!target?.chatJid) return false;
     const channel = findChannel(channels, target.chatJid);
@@ -14217,12 +14194,6 @@ async function main(): Promise<void> {
   logger.info({ component: 'assistant' }, 'Database initialized');
   loadState();
   reconcileRegisteredMainChatState();
-
-  try {
-    seedConfiguredAlexaLinkedAccount();
-  } catch (err) {
-    logger.error({ err }, 'Alexa linked-account seed failed');
-  }
 
   // Ensure OneCLI agents exist for all registered groups.
   // Recovers from missed creates (e.g. OneCLI was down at registration time).
@@ -14810,12 +14781,6 @@ async function main(): Promise<void> {
         'Google Calendar',
         truth.googleCalendar.blocker || truth.googleCalendar.detail,
         truth.googleCalendar.proofState,
-      ),
-      summarize(
-        'Alexa',
-        truth.alexa.blocker ||
-          `${truth.alexa.proofState}; model_sync=${truth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus}`,
-        truth.alexa.proofState,
       ),
       summarize(
         'Research',
@@ -18447,16 +18412,6 @@ async function main(): Promise<void> {
     );
   }
 
-  async function handleAlexaStatus(chatJid: string): Promise<void> {
-    const channel = findChannel(channels, chatJid);
-    if (!channel) return;
-
-    await channel.sendMessage(
-      chatJid,
-      'Alexa voice ingress has been removed from Andrea. Voice requests are no longer served.',
-    );
-  }
-
   async function handleAmazonSearch(
     chatJid: string,
     query: string,
@@ -21485,13 +21440,6 @@ async function main(): Promise<void> {
         return;
       }
 
-      if (ALEXA_STATUS_COMMANDS.has(commandToken)) {
-        handleAlexaStatus(chatJid).catch((err) =>
-          logger.error({ err, chatJid }, 'Alexa status command error'),
-        );
-        return;
-      }
-
       if (AMAZON_SEARCH_COMMANDS.has(commandToken)) {
         const query = rawTrimmed.split(/\s+/).slice(1).join(' ').trim();
         if (!query) {
@@ -22146,7 +22094,7 @@ async function main(): Promise<void> {
       ) || null,
   });
   ownerCockpitServer = startOwnerCockpitServer();
-  resolveTelegramMainChatForAlexa = (groupFolder: string) => {
+  resolveTelegramMainChatForHandoff = (groupFolder: string) => {
     const telegramEntries = Object.entries(registeredGroups).filter(([jid]) => {
       const channel = findChannel(channels, jid);
       return channel?.name === 'telegram';
@@ -22205,7 +22153,7 @@ async function main(): Promise<void> {
   ) =>
     targetChannel === 'bluebubbles'
       ? resolveBlueBubblesCompanionChat(groupFolder)
-      : resolveTelegramMainChatForAlexa(groupFolder);
+      : resolveTelegramMainChatForHandoff(groupFolder);
   sendCompanionHandoffMessageToChannel = async (chatJid, text, options) => {
     const channel = findChannel(channels, chatJid);
     if (!channel) {

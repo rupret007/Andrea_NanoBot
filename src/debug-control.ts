@@ -580,29 +580,9 @@ export function formatDebugStatus(
     `- Launch status: ${fieldTrialTruth.launchReadiness.status}`,
     `- Core status: ${fieldTrialTruth.launchReadiness.coreStatus}`,
     `- Launch summary: ${fieldTrialTruth.launchReadiness.summary}`,
-    `- Alexa model sync: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus}`,
-    `- Alexa model hash: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.interactionModelHash}`,
-    ...(fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa
-      .lastSyncedAt !== 'none'
-      ? [
-          `- Alexa model last synced at: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedAt}`,
-          `- Alexa model last synced by: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedBy}`,
-        ]
-      : []),
     ...(fieldTrialTruth.launchReadiness.coreBlockers.length > 0
       ? [
           `- Core blockers: ${fieldTrialTruth.launchReadiness.coreBlockers.join(' | ')}`,
-        ]
-      : []),
-    ...(fieldTrialTruth.launchReadiness.manualSyncSteps.length > 0
-      ? [
-          `- Manual sync steps: ${fieldTrialTruth.launchReadiness.manualSyncSteps.join(' | ')}`,
-        ]
-      : []),
-    ...(fieldTrialTruth.launchReadiness.optionalManualSurfaceBlockers.length > 0
-      ? [
-          `- Optional manual surface blockers: ${fieldTrialTruth.launchReadiness.optionalManualSurfaceBlockers.join(' | ')}`,
-          `- Optional manual surface next steps: ${fieldTrialTruth.launchReadiness.optionalManualSurfaceNextActions.join(' | ')}`,
         ]
       : []),
     ...(fieldTrialTruth.launchReadiness.optionalProviderBlockers.length > 0
@@ -630,34 +610,6 @@ export function formatDebugStatus(
     ...(fieldTrialTruth.telegram.nextAction
       ? [`- Telegram next step: ${fieldTrialTruth.telegram.nextAction}`]
       : []),
-    `- Alexa proof: ${fieldTrialTruth.alexa.proofState}`,
-    `- Alexa proof kind: ${fieldTrialTruth.alexa.proofKind}`,
-    `- Alexa proof freshness: ${fieldTrialTruth.alexa.proofFreshness}`,
-    `- Alexa proof age: ${fieldTrialTruth.alexa.proofAgeLabel}`,
-    `- Alexa last signed request: ${fieldTrialTruth.alexa.lastSignedRequestType}`,
-    `- Alexa last signed intent: ${fieldTrialTruth.alexa.lastSignedIntent}`,
-    `- Alexa last signed response source: ${fieldTrialTruth.alexa.lastSignedResponseSource}`,
-    ...(fieldTrialTruth.alexa.lastSignedRequestAt !== 'none'
-      ? [`- Alexa last signed at: ${fieldTrialTruth.alexa.lastSignedRequestAt}`]
-      : []),
-    ...(fieldTrialTruth.alexa.lastHandledProofIntent !== 'none'
-      ? [
-          `- Alexa last handled proof intent: ${fieldTrialTruth.alexa.lastHandledProofIntent}`,
-          `- Alexa last handled proof source: ${fieldTrialTruth.alexa.lastHandledProofResponseSource}`,
-          `- Alexa last handled proof at: ${fieldTrialTruth.alexa.lastHandledProofAt}`,
-        ]
-      : []),
-    ...(fieldTrialTruth.alexa.blocker
-      ? [`- Alexa blocker: ${fieldTrialTruth.alexa.blocker}`]
-      : []),
-    ...(fieldTrialTruth.alexa.nextAction
-      ? [`- Alexa next step: ${fieldTrialTruth.alexa.nextAction}`]
-      : []),
-    `- Alexa proof utterance: ${fieldTrialTruth.alexa.recommendedUtterance}`,
-    `- Alexa confirm command: ${fieldTrialTruth.alexa.confirmCommand}`,
-    `- Alexa success shape: ${fieldTrialTruth.alexa.successShape}`,
-    `- Alexa stale shape: ${fieldTrialTruth.alexa.staleShape}`,
-    `- Alexa failure checks: ${fieldTrialTruth.alexa.failureChecklist}`,
     `- BlueBubbles proof: ${fieldTrialTruth.bluebubbles.proofState}`,
     `- BlueBubbles provider: ${fieldTrialTruth.bluebubbles.providerName}`,
     `- Messages bridge availability: ${fieldTrialTruth.bluebubbles.bridgeAvailability}`,
@@ -769,7 +721,6 @@ export function formatDebugStatus(
     `- Journey mission_planning: ${fieldTrialTruth.journeys.mission_planning.proofState}`,
     `- Journey work_cockpit: ${fieldTrialTruth.journeys.work_cockpit.proofState}`,
     `- Journey cross_channel_handoff: ${fieldTrialTruth.journeys.cross_channel_handoff.proofState}`,
-    `- Journey alexa_orientation: ${fieldTrialTruth.journeys.alexa_orientation.proofState}`,
     ...(hostSnapshot.nodeRuntime
       ? [
           `- Pinned Node: ${hostSnapshot.nodeRuntime.version}`,

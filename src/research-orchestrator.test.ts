@@ -615,7 +615,7 @@ describe('research orchestrator', () => {
 
     const result = await runResearchOrchestrator({
       query: 'Summarize what matters from my current context',
-      channel: 'alexa',
+      channel: 'telegram',
       groupFolder: 'main',
       now: new Date('2026-04-05T10:00:00.000Z'),
     });
@@ -784,7 +784,7 @@ describe('research orchestrator', () => {
     expect(providerAttempt).not.toHaveBeenCalled();
   });
 
-  it('dedupes saved-source provenance and keeps Alexa library summaries concise', async () => {
+  it('dedupes saved-source provenance', async () => {
     saveKnowledgeSource({
       groupFolder: 'main',
       title: 'Long Dinner Notes',
@@ -808,7 +808,7 @@ describe('research orchestrator', () => {
     const result = await runResearchOrchestrator({
       query:
         'Use only my saved material to compare saved sources about Candace dinner timing.',
-      channel: 'alexa',
+      channel: 'telegram',
       groupFolder: 'main',
       now: new Date('2026-04-05T10:00:00.000Z'),
     });
@@ -819,9 +819,6 @@ describe('research orchestrator', () => {
     expect(
       new Set(result.supportingSources?.map((source) => source.title)).size,
     ).toBe(result.supportingSources?.length);
-    expect(result.spokenText).toContain('saved material');
-    expect(result.spokenText).not.toContain('Backup Dinner Summary');
-    expect(result.spokenText).not.toContain('\n');
   });
 
   it('dedupes identical saved-material hits across different source records', async () => {
@@ -927,7 +924,7 @@ describe('research orchestrator', () => {
 
     const result = await runResearchOrchestrator({
       query: 'Compare meal delivery options for this week',
-      channel: 'alexa',
+      channel: 'telegram',
       groupFolder: 'main',
       now: new Date('2026-04-05T11:00:00.000Z'),
     });

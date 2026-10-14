@@ -138,7 +138,7 @@ HTTP-send path is allowed, and group recipients never enter dispatch.
 - inbox/CRM behavior
 - operator/admin/runtime automation
 
-## Telegram Versus BlueBubbles Versus Alexa
+## Telegram Versus BlueBubbles
 
 ### Telegram
 
@@ -203,19 +203,6 @@ Important rule:
 
 - Andrea-authored companion/status replies keep the `Andrea:` label
 - approved real outbound user messages do **not** get the `Andrea:` label
-
-### Alexa
-
-Alexa stays an orientation surface.
-
-Andrea can:
-
-- help decide what to say
-- draft the reply
-- remind you to reply later
-- hand richer editing or sending to Telegram or BlueBubbles
-
-Alexa does not directly execute external sends in V1.
 
 ## Send Later Versus Remind Later Versus Save For Later
 

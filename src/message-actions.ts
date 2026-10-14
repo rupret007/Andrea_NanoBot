@@ -90,7 +90,7 @@ import type {
 } from './types.js';
 import type { AssistantPresentation } from './assistant-presentation.js';
 
-type PresentationChannel = 'telegram' | 'bluebubbles' | 'alexa';
+type PresentationChannel = 'telegram' | 'bluebubbles';
 
 interface ExternalThreadTarget {
   kind: 'external_thread';
@@ -124,7 +124,7 @@ export interface ResolvedBlueBubblesThreadTarget {
 
 export interface CreateMessageActionFromDraftParams {
   groupFolder: string;
-  presentationChannel: Exclude<PresentationChannel, 'alexa'>;
+  presentationChannel: PresentationChannel;
   presentationChatJid: string;
   presentationThreadId?: string | null;
   sourceType: MessageActionSourceType;
@@ -2717,7 +2717,7 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
 
 export function buildMessageActionPresentation(
   record: MessageActionRecord,
-  channel: Exclude<PresentationChannel, 'alexa'>,
+  channel: PresentationChannel,
 ): MessageActionPresentation {
   const explanation = parseExplanation(record);
   const linkedRefs = parseLinkedRefs(record);

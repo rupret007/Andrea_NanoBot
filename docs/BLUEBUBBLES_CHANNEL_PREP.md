@@ -323,7 +323,7 @@ BlueBubbles -> Telegram is explicit and supported:
 
 - `send me the fuller version on Telegram`
 
-Alexa / Telegram -> BlueBubbles is also explicit, but the target is now:
+Telegram -> BlueBubbles is also explicit, but the target is now:
 
 - the most recent Andrea-engaged BlueBubbles chat on this host
 - only if that engagement is fresh within 12 hours

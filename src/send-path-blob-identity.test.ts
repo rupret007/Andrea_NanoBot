@@ -16,8 +16,9 @@ import type { RegisteredGroup } from './types.js';
  * exact Bob fence: send it / send it now / send now.
  */
 const PINNED_SEND_PATH_BLOBS = {
+  // Updated only for removal of the retired channel from TypeScript types.
   'src/message-actions.ts':
-    '6d0f14df134bbc430a6770c5c2991d1476e15fb8dfd57fa334d3643064cd7c73',
+    '4862c1599a4498ea835ced87004e3b12ca17a0d3ca5622930ac3894003fbf773',
   'src/trusted-owner-review-surface.ts':
     '2e401cb1b0902f56085d8e6e61e07554af79f7cb4572ae0bc7de6630f4a897b1',
   'src/bluebubbles-outbound-request.ts':

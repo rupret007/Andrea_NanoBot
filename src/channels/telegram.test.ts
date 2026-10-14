@@ -279,7 +279,6 @@ describe('buildTelegramHelpText', () => {
     expect(help).not.toContain('/features');
     expect(help).not.toContain("what's on my calendar tomorrow");
     expect(help).not.toContain('Benchmark-Guided Packs');
-    expect(help).not.toContain('/alexa_status');
   });
 });
 
@@ -355,7 +354,7 @@ describe('buildTelegramCommandsText', () => {
     );
     expect(commands).not.toContain('/cursor_models [filter]');
     expect(commands).not.toContain('/cursor_create [options] <prompt>');
-    expect(commands).not.toContain('/alexa_status');
+
     expect(commands).not.toContain('/amazon_search <keywords>');
     expect(commands).not.toContain(
       '/purchase_request <asin> <offer_id> [quantity]',
@@ -476,9 +475,7 @@ describe('buildTelegramFeaturesText', () => {
       'Ordinary contact and group threads remain data-only',
     );
     expect(features).toContain('configured owner Messages self-thread');
-    expect(features).toContain(
-      'Alexa is concise voice help for schedule, reminders, list capture and readout, planning, and quick reply help',
-    );
+
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
     expect(features).not.toContain('/cursor-results');

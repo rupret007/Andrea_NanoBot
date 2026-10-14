@@ -1,3 +1,4 @@
+import { listCurrentToolReliabilityRollups } from './tool-reliability.js';
 import crypto from 'crypto';
 
 import { reviewAgentAction } from './critic-agent.js';
@@ -6,7 +7,6 @@ import {
   listActionIntents,
   listRealityContradictions,
   listRealityVerificationNeeds,
-  listToolReliabilityRollups,
   upsertActionPreflight,
 } from './db.js';
 import {
@@ -81,7 +81,7 @@ export interface ActionPreflightResult {
  * Live-proof entries describe readiness evidence, not a second approval gate.
  * An explicitly approved message send is itself the bounded proof operation:
  * transport health, recipient binding, delivery verification, and the fresh
- * send approval still apply.  A stale Alexa/BlueBubbles/Telegram proof marker
+ * send approval still apply.  A stale BlueBubbles/Telegram proof marker
  * must not turn an otherwise valid message into an unrelated global blocker.
  * Action-specific authentication and contradiction records continue through
  * the normal high-risk path below.
@@ -98,7 +98,7 @@ function verificationNeedAppliesToAction(
   // Manual-proof rows are readiness markers produced by the live-proof
   // gauntlet.  An explicitly approved message send remains a bounded,
   // receipt-verified way to refresh that evidence; it must not deadlock on
-  // stale Alexa, Telegram, or BlueBubbles proof.  Open/critical action facts
+  // stale Telegram, or BlueBubbles proof.  Open/critical action facts
   // still pass through and can block the send.
   return !(
     input.actionType === 'message_send' && need.status === 'manual_proof'
@@ -216,7 +216,7 @@ export function runActionPreflight(
   let toolStatus: ActionPreflightCheck['status'] = 'pass';
   let toolDetail = 'No tool reliability concern recorded.';
   if (dbReady && subjectId) {
-    const rollup = listToolReliabilityRollups({ limit: 100 }).find(
+    const rollup = listCurrentToolReliabilityRollups({ limit: 100 }).find(
       (entry) => entry.subjectId === subjectId,
     );
     if (rollup) {

@@ -1,6 +1,6 @@
 # Missions And Execution
 
-Andrea now has a bounded `missions.*` layer for turning an explicit goal into a stored plan that can move forward across Alexa, Telegram, and BlueBubbles.
+Andrea now has a bounded `missions.*` layer for turning an explicit goal into a stored plan that can move forward across Telegram and BlueBubbles.
 
 ## Where This Shows Up In Signature Flows
 
@@ -16,9 +16,9 @@ The productized journey should feel like:
 - names the blocker
 - suggests one supporting action
 - executes that action only after the user says yes
-- keeps the same plan alive across Alexa, Telegram, and follow-through
+- keeps the same plan alive across Telegram and follow-through
 
-Telegram is the default rich mission surface. Alexa should orient around the next step and blocker, and BlueBubbles should stay concise unless the user explicitly wants the fuller plan elsewhere.
+Telegram is the default rich mission surface. BlueBubbles stays concise unless the user explicitly wants the fuller plan elsewhere.
 
 ## What Missions Are
 
@@ -187,14 +187,6 @@ are release-specific; use `npm run services:status` and
 not a deployed recovery claim.
 
 ## Channel Shape
-
-Alexa:
-
-- short orientation only
-- lead summary
-- next step
-- main blocker
-- optional handoff to Telegram
 
 Telegram:
 

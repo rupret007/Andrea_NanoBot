@@ -15,7 +15,7 @@ Andrea is designed to be practically useful every day: schedule help, reminders,
 </p>
 
 <p align="center">
-  Andrea now also has a bounded chief-of-staff layer for priorities, prep, and explainable decision support across Alexa, Telegram, and BlueBubbles.
+  Andrea now also has a bounded chief-of-staff layer for priorities, prep, and explainable decision support across Telegram and BlueBubbles.
 </p>
 
 <p align="center">
@@ -226,7 +226,7 @@ free-space value in this README. Before a release or demo:
 - use [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) for the latest dated
   evidence summary, then rerun the commands above because integration proof
   and disk capacity expire independently of repository documentation;
-- treat BlueBubbles, Telegram, Alexa, life-thread, and provider states exactly
+- treat BlueBubbles, Telegram, life-thread, and provider states exactly
   as the live status surfaces classify them. Configured transport, stale
   proof, and current end-to-end proof are different claims.
 - Integration status keeps configuration, transport health, and proof freshness separate. For example, an overdue Telegram `/ping` may be `near_live_only` while the configured long-polling transport remains healthy; the stale success timestamp is proof debt, not a transport failure.
@@ -423,49 +423,6 @@ The imported `imported/andrea_openai_bot` subtree is temporary staging plus hist
 
 Under the hood, the current Codex/OpenAI lane now resolves through the local `Andrea_OpenAI_Bot` loopback backend when that lane is enabled. `npm run setup -- --step verify` (and the host start/restart output) surfaces `runtime_backend_health`, `runtime_backend_local_execution_state`, and `runtime_backend_auth_state` so host truth matches `/runtime-status` and the `/cursor` cockpit. See [docs/ANDREA_OPENAI_BACKEND.md](docs/ANDREA_OPENAI_BACKEND.md) for the ownership split and the current auth/bootstrap flow.
 
-## Alexa Companion Mode
-
-Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
-
-- it reuses the same Andrea core, account-linking, and trust boundaries
-- it now maps core daily, household, memory, thread, and bounded research asks through the shared assistant capability graph
-- it now captures broader natural speech through a small set of carrier-phrase intent families instead of leaning only on narrow one-off intents
-- it is shorter, warmer, more spoken-first, and less menu-like than Telegram
-- it now has a small bounded personality layer for softer transitions in low-stakes moments
-- it supports daily guidance like morning brief, what matters most today, anything important, what am I forgetting, evening reset, and family-upcoming flows
-- it keeps short-lived conversational continuity for turns like `anything else`, `what about Candace`, `what about Travis`, `say more`, `why`, `remember that`, `make that shorter`, `be a little more direct`, and `remind me before that`
-- it supports request-driven Andrea Pulse asks such as `Andrea Pulse`, `tell me something interesting`, `give me a weird fact`, or `surprise me`
-- it can handle bounded research or comparison asks briefly by voice and keep longer follow-through on Telegram when needed
-- it can now orient you around open conversations, owed replies, and communication follow-through without turning Alexa into a full messaging client
-- personalization remains explicit and consent-based
-- use a supported Node `22.x` runtime (`>=22 <23`) for Alexa on macOS/Linux;
-  reproducible CI, Windows provisioning, and the container image use the exact
-  repository pin `22.22.2`
-
-Alexa proof is status-led on each host:
-
-- treat `npm run services:status`, `npm run debug:status`, and `npm run setup -- --step verify` as the live authority
-- Alexa only becomes `live_proven` while a fresh handled Andrea custom-skill proof remains inside the 24-hour window
-- operator surfaces can satisfy that proof either from the persisted handled signed-request markers or, after restart, from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
-- if that handled proof ages out or no fresh qualifying proof remains on this host, Alexa should read as `near_live_only`
-- if the latest repo interaction-model hash has not been marked synced yet, launch-readiness should read `core_ready_with_manual_surface_sync` even while Alexa proof itself remains `live_proven`
-
-When you want to refresh Alexa proof freshness, this is the validation flow:
-
-- `Open Andrea Assistant`
-- `What am I forgetting?`
-- `Anything else?`
-- `What about Candace?`
-- `Be a little more direct.`
-- optional `What should I remember tonight?`
-
-If that handled signed proof ages past 24 hours, operator surfaces will intentionally drop Alexa back to `near_live_only` until you run this flow again.
-
-Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch, but it does not count as live proof unless Andrea logs a real signed follow-up `IntentRequest` after launch.
-
-After any interaction-model change, re-import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console, run `Build Model`, then run `npm run setup -- --step alexa-model-sync mark-synced` before treating live fallback as a repo bug.
-
-
 ## Andrea Pulse
 
 Andrea Pulse is a separate request-driven personality feature. It is not a health check, not a replacement for `/ping`, and not a source of proactive spam.
@@ -526,7 +483,6 @@ Andrea now has a bounded communication-companion layer for real conversations an
 - communication threads are explicit conversation-level state, not a CRM
 - Andrea can summarize a message, decide whether it still needs a reply, suggest next actions, and draft a reply in a warmer or more direct tone
 - Telegram and BlueBubbles are the richer communication surfaces
-- Alexa stays concise and can orient you around `what do I owe people`, `what's still open with Candace`, or `draft that for me`
 - open conversations can feed into daily guidance and evening carryover without creating passive inbox surveillance
 - after reviewing one local conversation, the standalone `forget this conversation thread completely` removes its tracking record and directly derived history from the same trusted owner control chat; original messages, saved profiles/life threads, reminders, and drafts remain. Changed, expired, or ambiguous reviews cannot authorize removal. `stop tracking that` still retains a disabled record.
 - relationship-aware guidance counts a conversation identity as resolved only after an existing person is explicitly linked or the owner dismisses the single-person link as not applicable; every decision is reversible
@@ -542,30 +498,27 @@ See [docs/COMMUNICATION_COMPANION.md](docs/COMMUNICATION_COMPANION.md) for the e
 
 ## Missions And Multi-Step Execution
 
-Andrea now has a bounded missions layer for turning an explicit goal into a stored plan that can move forward across Alexa, Telegram, and BlueBubbles.
+Andrea now has a bounded missions layer for turning an explicit goal into a stored plan that can move forward across Telegram and BlueBubbles.
 
 - explicit planning asks like `help me plan Friday dinner with Candace` create a stored `proposed` mission immediately
 - missions stay distinct from chief-of-staff, life threads, reminders, and current work
 - each mission keeps a short summary, 3-5 steps, blockers, and one suggested next action
 - durable follow-through still requires explicit approval such as `remind me`, `draft it`, `save that`, `track that`, or `start the research`
-- Alexa gives a short orientation read, while Telegram gets the fuller plan and action surface
+- Telegram gets the fuller plan and action surface
 
 See [docs/MISSIONS_AND_EXECUTION.md](docs/MISSIONS_AND_EXECUTION.md) for the model, controls, and testing flow.
 
 ## Shared Assistant Core
 
-Andrea now has a shared assistant capability graph so Alexa and Telegram feel like two expressions of the same assistant rather than separate route trees.
+Andrea now has a shared assistant capability graph so Telegram and BlueBubbles feel like two expressions of the same assistant rather than separate route trees.
 
 - shared capabilities now cover daily guidance, household-aware answers, explicit thread lookup, memory controls, and bounded research
 - shared capabilities now also cover explicit Knowledge Library controls such as saving sources, listing relevant sources, explaining source choice, and summarizing saved material
 - shared capabilities now also cover ritual status, ritual control, and follow-through guidance
 - shared capabilities now also include explicit Andrea Pulse actions
-- Alexa can now hand richer results off to Telegram explicitly instead of pretending voice should carry everything
-- voice follow-ups like `send me the details`, `save that in my library`, and `turn that into a reminder` now map into the same shared completion layer
-- Alexa keeps voice-safe shaping and bounded follow-ups
+- contextual follow-ups like `send me the details`, `save that in my library`, and `turn that into a reminder` now map into the same shared completion layer
 - BlueBubbles is now a real companion channel with its own safety gate and output-shaping policy
 - Telegram keeps richer rendering and deeper operator-side actions
-- operator-only current-work controls stay out of Alexa even though they live in the same registry
 
 ## Proactive Rituals And Follow-Through
 
@@ -574,7 +527,6 @@ Andrea now has a bounded rituals layer that sits above daily companion, reminder
 - rituals define assistant behavior and timing, not a second task system
 - follow-through loops stay attached to life threads instead of spawning a parallel backlog
 - morning and evening rituals can be scheduled on Telegram, but stay off until you opt in
-- Alexa stays on-demand only and voice-first
 - family and household automatic surfacing stay conservative unless you explicitly enable them
 
 Typical prompts now include:
@@ -590,7 +542,7 @@ See [docs/PROACTIVE_RITUALS.md](docs/PROACTIVE_RITUALS.md) for the model, contro
 
 - bounded research now returns a summary first, structured findings, route explanation, and exact blocker truth when web-backed OpenAI research is unavailable
 - bounded research can now use local context, the Knowledge Library, optional OpenAI-backed synthesis with `web_search` when configured, and runtime delegation only when the request is clearly execution-heavy
-- Telegram image generation is now wired through the shared media capability when OpenAI credentials are present and the provider account is usable; Alexa keeps media at the handoff layer
+- Telegram image generation is now wired through the shared media capability when OpenAI credentials are present and the provider account is usable
 
 See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for the descriptor model, safety rules, research provider boundaries, and license-safe pattern sources.
 
@@ -604,7 +556,6 @@ Andrea now has a bounded Action Bundle layer so good advice can turn into explic
 
 - bundles are small, explainable sets of actions built on top of existing reminders, drafts, thread saves, library saves, rituals, handoffs, and mission follow-through
 - Telegram is the rich approval surface with inline actions like `Approve all`, `Pick actions`, and `Not now`
-- Alexa stays concise and can orient you around the bundle, approve simple subsets, or send the full bundle to Telegram
 - BlueBubbles stays bounded and hands richer bundle approval back to Telegram
 - bundle execution is explicit, tracked, and honest about partial success or failure
 
@@ -617,7 +568,6 @@ Andrea now has a bounded closed-loop review layer so execution does not stop at 
 - outcomes track what actually happened after bundles, reminders, missions, communication follow-through, handoffs, and current-work moves
 - daily and weekly review stay on-demand and grounded in real state Andrea owns or can safely infer
 - Telegram is the richer review surface with grouped sections and bounded controls
-- Alexa stays concise and can orient you around what got done, what slipped, and what is carrying into tomorrow
 - BlueBubbles stays bounded and should hand off dense review to Telegram
 
 This layer stays distinct from:
@@ -631,12 +581,12 @@ See [docs/OUTCOME_TRACKING_AND_REVIEWS.md](docs/OUTCOME_TRACKING_AND_REVIEWS.md)
 
 ## Cross-Channel Companion Handoffs
 
-Andrea now has a bounded cross-channel handoff layer so a conversation can start briefly on Alexa, continue in BlueBubbles or Telegram when appropriate, and still feel like one assistant.
+Andrea has a bounded cross-channel handoff layer so a conversation can continue between BlueBubbles and Telegram when appropriate.
 
 - handoffs are explicit and user-visible
 - Telegram remains the richer artifact/detail surface, while BlueBubbles can now receive bounded text continuations
 - no silent push behavior was added
-- voice-triggered completion actions reuse existing reminder, thread, ritual, and Knowledge Library systems instead of creating a second planner
+- follow-up completion actions reuse existing reminder, thread, ritual, and Knowledge Library systems instead of creating a second planner
 
 Typical follow-ups now include:
 
@@ -676,7 +626,7 @@ Andrea now has a bounded **Knowledge Library** for saved source material.
 - it is separate from memory facts, life threads, reminders, and current work
 - it supports manual notes, saved research, and approved local text-file imports
 - retrieval is lexical-first with chunk-level provenance instead of silent blob matching
-- Telegram is the richer source-grounded surface, while Alexa stays concise and source-aware
+- Telegram is the richer source-grounded surface
 
 Useful prompts include:
 
@@ -688,8 +638,6 @@ Useful prompts include:
 - `combine my notes with outside research`
 
 See [docs/KNOWLEDGE_LIBRARY.md](docs/KNOWLEDGE_LIBRARY.md) for the library model, ingestion rules, retrieval behavior, privacy boundaries, and testing path.
-
-For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener, OAuth health, public-ingress hinting, and the last signed Alexa request markers on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks. If the live host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa console endpoint SSL setting must use the wildcard-certificate option.
 
 ## Two Command Surfaces
 
@@ -745,7 +693,7 @@ For a reliable demo, keep the story tight:
 - stable health checks, `/help`, and `/cursor_status`
 - secure per-chat isolation and clean user-facing replies
 
-Optional integrations such as Cursor Cloud job control, desktop bridge control, Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day. Alexa in particular is now code-complete as a bounded personal-assistant channel, but live use still depends on Node 22, HTTPS ingress, Alexa console setup, and account linking being configured on that host.
+Optional integrations such as Cursor Cloud job control, desktop bridge control, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
 
 ## Calendar Integration
 
@@ -769,9 +717,6 @@ Google Calendar now supports two practical operator flows on a configured host:
 
 - read real events from explicit selected calendars such as `primary` plus family/shared calendars
 - create simple one-time Google Calendar events after a clear confirmation in chat
-- on Alexa, store the event draft and ask for confirmation even when only one
-  writable calendar exists; choosing a calendar selects the destination but
-  does not authorize the write
 - split a clear calendar-plus-research ask into an approval-bound event draft and
   a separately reported read-only research result; the research clause is never
   copied into the event title, compound drafts require `confirm calendar event`,
@@ -779,8 +724,8 @@ Google Calendar now supports two practical operator flows on a configured host:
   outward research request
 - split a clear reminder-plus-research ask into one local reminder and a
   separately reported, bounded read-only research leg. The reminder is
-  persisted before its acknowledgement; retrying the same inbound Telegram,
-  BlueBubbles, or Alexa request converges on that reminder instead of creating
+  persisted before its acknowledgement; retrying the same inbound Telegram
+  or BlueBubbles request converges on that reminder instead of creating
   another one. Research starts only after the primary reply is delivered and
   is never replayed automatically after an interrupted run. A natural
   “what happened with that?” asks Andrea for the separately persisted reminder
@@ -865,12 +810,12 @@ remain separately recorded in
 - compare options, explain tradeoffs, and recommend a choice with route explanation
 - save source material into a bounded Knowledge Library and ask source-grounded follow-up questions later
 - compare saved notes, summaries, and imported reference material with visible provenance
-- keep Alexa concise while Telegram carries the richer structured research surface
+- use Telegram for the richer structured research surface
 - monitor or re-check information through scheduled tasks
 - capture groceries, errands, bills, meal ideas, and household checklists without setup friction
 - reopen recurring bills and household items when they come due, then convert the current cycle into a reminder, plan, or household thread when that helps
 - turn those lists into practical household views like store run, bills this week, tonight, weekend, recurring soon, recently completed, and slipping carryover
-- use Telegram as the richer list-management surface with grouped sections and bounded inline actions, while Alexa and BlueBubbles stay concise
+- use Telegram as the richer list-management surface with grouped sections and bounded inline actions, while BlueBubbles stays concise
 - organize output per chat or group context
 
 ### Coding And Operator Work
@@ -1023,8 +968,6 @@ Use the docs based on what you are trying to do:
   for operator-only desktop session recovery and terminal commands on your own machine while Andrea controls it remotely
 - [docs/CURSOR_API_KEYS.md](docs/CURSOR_API_KEYS.md)
   for where `CURSOR_API_KEY` comes from, what it enables, and how it differs from the desktop bridge
-- [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
-  for Alexa v1 setup, account-linking rules, Node 22 validation requirements, and the final live-acceptance runbook
 - [docs/KNOWLEDGE_LIBRARY.md](docs/KNOWLEDGE_LIBRARY.md)
   for the Knowledge Library model, explicit save/import rules, lexical-first retrieval, and source-grounded answer behavior
 - [docs/COMMITMENT_INTELLIGENCE.md](docs/COMMITMENT_INTELLIGENCE.md)

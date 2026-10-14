@@ -1,6 +1,6 @@
 import type { CompanionHandoffPayload } from './types.js';
 
-type SignatureFlowChannel = 'alexa' | 'telegram' | 'bluebubbles';
+type SignatureFlowChannel = 'telegram' | 'bluebubbles';
 
 const SIGNATURE_SIGNAL_LABELS: Record<string, string> = {
   calendar: 'your calendar',
@@ -192,17 +192,6 @@ export function buildSignaturePostActionConfirmation(input: {
         '',
       )
     : null;
-
-  if (input.channel === 'alexa') {
-    return [
-      didWhat,
-      conversationalNextSuggestion
-        ? `If you want, I can ${conversationalNextSuggestion}.`
-        : null,
-    ]
-      .filter(Boolean)
-      .join(' ');
-  }
 
   if (input.channel === 'bluebubbles') {
     return [

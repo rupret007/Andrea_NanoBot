@@ -1,4 +1,4 @@
-import { completeAssistantActionFromAlexa } from '../src/assistant-action-completion.js';
+import { completeAssistantAction } from '../src/assistant-action-completion.js';
 import { executeAssistantCapability } from '../src/assistant-capabilities.js';
 import {
   _initTestDatabase,
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
   const openLoops = await executeAssistantCapability({
     capabilityId: 'communication.open_loops',
     context: {
-      channel: 'alexa',
+      channel: 'bluebubbles',
       groupFolder,
       now,
     },
@@ -95,8 +95,9 @@ async function main(): Promise<void> {
     return { platformMessageId: `tg-debug-${sentMessages.length}` };
   };
 
-  const handoff = await completeAssistantActionFromAlexa(
+  const handoff = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder,
       action: 'send_details',
       utterance: 'send the details to Telegram',

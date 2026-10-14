@@ -5,7 +5,7 @@ import { analyzeMetacognitiveTurn } from './metacognition.js';
 
 const NOW = '2026-06-09T20:20:00.000Z';
 
-function analyze(rawAsk: string, channel: 'telegram' | 'alexa' = 'telegram') {
+function analyze(rawAsk: string, channel: 'telegram' = 'telegram') {
   return analyzeMetacognitiveTurn({
     rawAsk,
     channel,
@@ -25,13 +25,6 @@ describe('metacognition strategy routing', () => {
     );
 
     expect(result.mode).toBe('plan_stepwise');
-  });
-
-  it('keeps read-only Alexa calendar questions out of action verification', () => {
-    const result = analyze('what is on my calendar today?', 'alexa');
-
-    expect(['fast_direct', 'retrieve_grounded']).toContain(result.mode);
-    expect(result.mode).not.toBe('verify_then_act');
   });
 
   it('routes explicit dinner versus practice tradeoffs to comparison', () => {

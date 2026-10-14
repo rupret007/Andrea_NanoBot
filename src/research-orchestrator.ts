@@ -68,7 +68,7 @@ export type ResearchProviderUsed =
 
 export interface ResearchRequest {
   query: string;
-  channel: 'alexa' | 'telegram';
+  channel: 'telegram';
   groupFolder?: string;
   now?: Date;
   conversationSummary?: string;
@@ -102,7 +102,6 @@ export interface ResearchPlan {
   primarySource: ResearchSourceName;
   reason: string;
   sources: ResearchSourceSet;
-  needsTelegramHandoff: boolean;
 }
 
 export interface ResearchHandoffOption {
@@ -441,17 +440,13 @@ function isGenericCompareClarifierQuery(
 }
 
 function buildGenericComparisonClarifier(
-  request: ResearchRequest,
+  _request: ResearchRequest,
   plan: ResearchPlan,
 ): ResearchResult {
   const summaryText =
     plan.kind === 'compare'
-      ? request.channel === 'alexa'
-        ? 'Tell me the two things you want me to compare.'
-        : 'Tell me the two things you want me to compare, and I will break down the tradeoffs.'
-      : request.channel === 'alexa'
-        ? 'Tell me the options you want me to weigh first.'
-        : 'Tell me the options you want me to weigh first, and I will tell you which one looks stronger.';
+      ? 'Tell me the two things you want me to compare, and I will break down the tradeoffs.'
+      : 'Tell me the options you want me to weigh first, and I will tell you which one looks stronger.';
   return {
     handled: true,
     kind: plan.kind,
@@ -824,8 +819,7 @@ function buildResearchBlockerResult(
       openAiBlocked: blocker,
     }),
     structuredFindings: [],
-    followupSuggestions:
-      request.channel === 'alexa' ? [] : buildDefaultFollowups(plan.kind),
+    followupSuggestions: buildDefaultFollowups(plan.kind),
     debugPath,
   };
 }
@@ -961,7 +955,6 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
       primarySource: 'runtime_delegate',
       reason: 'the request looks execution-heavy or operator-oriented',
       sources,
-      needsTelegramHandoff: request.channel === 'alexa',
     };
   }
 
@@ -974,9 +967,6 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
           ? 'the request explicitly asked to combine saved material with outside research'
           : 'the request explicitly asked about saved notes or library material',
       sources,
-      needsTelegramHandoff:
-        request.channel === 'alexa' &&
-        (kind !== 'summary' || savedMaterialMode === 'combine'),
     };
   }
 
@@ -990,9 +980,6 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
           ? 'the request is outward-facing or comparison-heavy and benefits from a web-backed model answer'
           : 'the request benefits from model synthesis beyond local context alone',
       sources,
-      needsTelegramHandoff:
-        request.channel === 'alexa' &&
-        (kind !== 'summary' || sources.webSearch),
     };
   }
 
@@ -1003,7 +990,6 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
       ? 'the request sounds personal and can be answered from Andrea local context'
       : 'the request can stay in the shared local research path',
     sources,
-    needsTelegramHandoff: false,
   };
 }
 
@@ -1160,10 +1146,7 @@ function summarizeKnowledgeResearch(
     freshness: classifySavedSourceFreshness(source.updatedAt, request.now),
   }));
   if (supportingSources.length === 0) {
-    const summaryText =
-      request.channel === 'alexa'
-        ? 'I do not have saved material on that yet.'
-        : 'I do not have saved material on that yet.';
+    const summaryText = 'I do not have saved material on that yet.';
     return {
       handled: true,
       kind: plan.kind,
@@ -1180,10 +1163,9 @@ function summarizeKnowledgeResearch(
         options.routeExplanation ||
         buildRouteExplanation(plan, { knowledgeCount: 0 }),
       structuredFindings: [],
-      followupSuggestions:
-        request.channel === 'alexa'
-          ? ['Want me to save something on this topic first?']
-          : ['Want me to save a note or research result on this topic?'],
+      followupSuggestions: [
+        'Want me to save a note or research result on this topic?',
+      ],
       debugPath: [...knowledge.search.debugPath, 'knowledge.summary:no_hits'],
       supportingSources: [],
     };
@@ -1202,17 +1184,7 @@ function summarizeKnowledgeResearch(
       ? ` Treat this as potentially outdated; the source was last updated ${top.updatedAt.slice(0, 10)}.`
       : '';
   const summaryText = `${summaryLead}${summaryTail}${staleNote}`.trim();
-  const spokenExcerpt = top.excerpt
-    ? top.excerpt
-        .replace(/\s+/g, ' ')
-        .replace(/^#+\s*/g, '')
-        .trim()
-        .slice(0, 140)
-        .trimEnd()
-    : '';
-  const spokenSummaryText = [summaryLead, spokenExcerpt]
-    .filter(Boolean)
-    .join(' ');
+
   const structuredFindings: ResearchFindingSection[] = [
     {
       title:
@@ -1241,13 +1213,7 @@ function summarizeKnowledgeResearch(
     plan,
     providerUsed: 'knowledge_library',
     summaryText,
-    spokenText:
-      request.channel === 'alexa'
-        ? buildSpokenResearchText(spokenSummaryText, {
-            recommendationText:
-              plan.kind === 'recommend' ? recommendationText : undefined,
-          })
-        : undefined,
+    spokenText: undefined,
     fullText: buildResearchText(
       summaryText,
       structuredFindings,
@@ -1271,16 +1237,7 @@ function summarizeKnowledgeResearch(
     debugPath: [...knowledge.search.debugPath, 'knowledge.summary:grounded'],
     recommendationText,
     supportingSources,
-    handoffOption:
-      request.channel === 'alexa' &&
-      (plan.kind !== 'summary' || supportingSources.length > 2)
-        ? {
-            channel: 'telegram',
-            reason:
-              'the saved source detail is richer than a spoken answer should be',
-            prompt: request.query,
-          }
-        : undefined,
+    handoffOption: undefined,
   };
 }
 
@@ -1342,10 +1299,9 @@ function summarizeOutsideResearch(
     ),
     routeExplanation,
     structuredFindings,
-    followupSuggestions:
-      request.channel === 'alexa'
-        ? []
-        : ['Want me to do a deeper synthesis over these sources?'],
+    followupSuggestions: [
+      'Want me to do a deeper synthesis over these sources?',
+    ],
     saveForLaterCandidate: summaryText,
     sourceNotes: [
       'Brave Search',
@@ -1449,12 +1405,7 @@ function collectKnowledgeLibraryContext(
     groupFolder: request.groupFolder,
     query: request.query,
     requestedSourceIds: request.requestedSourceIds,
-    limit:
-      request.requestedDepth === 'deep'
-        ? 8
-        : request.channel === 'alexa'
-          ? 4
-          : 6,
+    limit: request.requestedDepth === 'deep' ? 8 : 6,
   });
   return buildKnowledgeContextBlock(search);
 }
@@ -1685,7 +1636,7 @@ async function runMiniMaxResearch(
       'You are Andrea, a calm capable personal assistant doing bounded research. Do not mention internal tools, secrets, providers, or implementation details.',
     prompt,
     modelTier: plan.kind === 'summary' ? 'fast' : 'complex',
-    maxTokens: request.channel === 'alexa' ? 650 : 1000,
+    maxTokens: 1000,
   });
   if (!result) return null;
   if ('providerFailure' in result) {
@@ -1718,10 +1669,8 @@ async function runMiniMaxResearch(
     providerUsed,
     summaryText: parsed.summaryText,
     spokenText: buildSpokenResearchText(parsed.summaryText, {
-      recommendationText:
-        request.channel === 'alexa' ? parsed.recommendationText : undefined,
-      firstFinding:
-        request.channel === 'alexa' ? parsed.findings[0] : undefined,
+      recommendationText: undefined,
+      firstFinding: undefined,
     }),
     fullText: buildResearchText(
       parsed.summaryText,
@@ -1754,14 +1703,7 @@ async function runMiniMaxResearch(
       outside?.supportingSources.length ? 'Brave Search' : 'MiniMax synthesis',
       ...buildOutsideSourceNotes(outside?.supportingSources || []),
     ].filter(Boolean),
-    handoffOption:
-      plan.needsTelegramHandoff && request.channel === 'alexa'
-        ? {
-            channel: 'telegram',
-            reason: 'the result is richer than a spoken answer should be',
-            prompt: normalizeQuery(request.query),
-          }
-        : undefined,
+    handoffOption: undefined,
     debugPath: [
       `plan.primary=${plan.primarySource}`,
       `provider=${providerUsed}`,
@@ -1808,10 +1750,8 @@ async function runOpenAiResearch(
 
   const synthesisPrompt = [
     'You are Andrea, a calm capable personal assistant doing bounded research.',
-    `Answer this for ${request.channel === 'alexa' ? 'voice-first delivery' : 'Telegram chat delivery'}.`,
-    request.channel === 'alexa'
-      ? 'Keep the summary concise and spoken-style.'
-      : 'Keep the answer structured, readable, and useful.',
+    'Answer this for Telegram chat delivery.',
+    'Keep the answer structured, readable, and useful.',
     'Do not mention internal tools or implementation details.',
     'Return plain text in exactly this shape:',
     'Summary: <one or two sentences>',
@@ -1985,10 +1925,8 @@ async function runOpenAiResearch(
         providerUsed,
         summaryText: parsed.summaryText,
         spokenText: buildSpokenResearchText(parsed.summaryText, {
-          recommendationText:
-            request.channel === 'alexa' ? parsed.recommendationText : undefined,
-          firstFinding:
-            request.channel === 'alexa' ? parsed.findings[0] : undefined,
+          recommendationText: undefined,
+          firstFinding: undefined,
         }),
         fullText: buildResearchText(
           parsed.summaryText,
@@ -2026,14 +1964,7 @@ async function runOpenAiResearch(
           ...buildOutsideSourceNotes(outside?.supportingSources || []),
           ...buildOutsideSourceNotes(extractedResponse.supportingSources),
         ].filter(Boolean),
-        handoffOption:
-          plan.needsTelegramHandoff && request.channel === 'alexa'
-            ? {
-                channel: 'telegram',
-                reason: 'the result is richer than a spoken answer should be',
-                prompt: normalizeQuery(request.query),
-              }
-            : undefined,
+        handoffOption: undefined,
         debugPath: [
           `plan.primary=${plan.primarySource}`,
           `provider=${providerUsed}`,
@@ -2219,13 +2150,8 @@ async function runResearchOrchestratorInternal(
         kind: plan.kind,
         plan,
         summaryText:
-          normalizedRequest.channel === 'alexa'
-            ? 'I can only use saved material when I have your linked library context.'
-            : 'I can only use saved library material when this conversation is tied to one of your Andrea group folders.',
-        spokenText:
-          normalizedRequest.channel === 'alexa'
-            ? 'I can only use saved material when I have your linked library context.'
-            : undefined,
+          'I can only use saved library material when this conversation is tied to one of your Andrea group folders.',
+        spokenText: undefined,
         fullText:
           'I can only use saved library material when this conversation is tied to one of your Andrea group folders.',
         sourceNotes: ['knowledge library unavailable without group context'],

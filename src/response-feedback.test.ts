@@ -885,11 +885,11 @@ describe('response feedback helpers', () => {
 
   it('classifies manual-sync-only misses', () => {
     const result = classifyResponseFeedbackCandidate({
-      originalUserText: 'why did Alexa miss that',
+      originalUserText: 'why did the provider miss that',
       assistantReplyText:
-        'Please import the interaction model and Build Model.',
-      routeKey: 'alexa.answer',
-      capabilityId: 'alexa.answer',
+        'Please complete the manual sync of the provider configuration.',
+      routeKey: 'provider.answer',
+      capabilityId: 'provider.answer',
       responseSource: 'fallback',
       traceReason: 'manual sync required',
       blockerClass: 'manual_surface_sync',

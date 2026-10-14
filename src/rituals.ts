@@ -24,7 +24,6 @@ import type {
   RitualType,
   ScheduledTask,
 } from './types.js';
-import { buildVoiceReply } from './voice-ready.js';
 
 const DEFAULT_RITUAL_SOURCE_INPUTS: Record<RitualType, RitualSourceInput[]> = {
   morning_brief: [
@@ -365,28 +364,13 @@ function ritualTypeFromPriorMode(
 }
 
 function buildStatusReply(
-  channel: 'telegram' | 'alexa' | 'bluebubbles',
+  _channel: 'telegram' | 'bluebubbles',
   profiles: RitualProfile[],
 ): string {
   const enabled = profiles.filter(
     (profile) => profile.enabled || profile.triggerStyle === 'on_request',
   );
-  if (channel === 'alexa') {
-    const first = enabled[0];
-    return buildVoiceReply({
-      summary: first
-        ? `You currently have ${enabled.length} ritual patterns available.`
-        : 'You do not have any scheduled ritual patterns enabled right now.',
-      details: first
-        ? [
-            `${ritualLabel(first.ritualType)} is ${first.triggerStyle.replace('_', ' ')}.`,
-          ]
-        : [
-            'Morning and evening rituals are still on request unless you opt in.',
-          ],
-      maxDetails: 1,
-    });
-  }
+
   const lines = enabled.length
     ? enabled.map((profile) => {
         const nextDue =
@@ -461,7 +445,7 @@ function pinCurrentContextToEveningReset(input: RitualCommandInput): string {
 
 export interface RitualCommandInput {
   groupFolder: string;
-  channel: 'telegram' | 'alexa' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   text: string;
   chatJid?: string;
   replyText?: string;
@@ -623,7 +607,7 @@ export function handleRitualCommand(
     return {
       handled: true,
       responseText:
-        'Okay. I saved that preference, but scheduled ritual delivery itself stays on Telegram. On Alexa, you can still ask for it on demand.',
+        'Okay. I saved that preference, but scheduled ritual delivery itself stays on Telegram. You can still ask for it on demand.',
       updatedProfile: updated,
     };
   }

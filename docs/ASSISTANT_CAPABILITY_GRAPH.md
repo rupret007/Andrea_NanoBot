@@ -1,12 +1,11 @@
 # Andrea Assistant Capability Graph
 
-Andrea now has a shared assistant-action layer that sits above the Telegram and Alexa channel edges.
+Andrea now has a shared assistant-action layer that sits above the Telegram and BlueBubbles channel edges.
 
 The goal is not to flatten Andrea into one blob. The goal is to let both channels call the same assistant capabilities where that is safe, while keeping:
 
 - memory facts separate from life threads
 - reminders separate from current work
-- Alexa session state separate from Telegram context
 - operator/runtime controls separate from public assistant actions
 
 ## What The Capability Graph Is
@@ -21,7 +20,6 @@ Each capability descriptor records:
 - required and optional inputs
 - whether account linking is required
 - whether explicit confirmation is required
-- whether it is safe for Alexa
 - whether it is safe for Telegram
 - whether it is safe for BlueBubbles
 - whether it is operator-only
@@ -108,23 +106,15 @@ Current seeded categories:
 
 The graph is explicit about channel safety.
 
-- Alexa-safe capabilities are voice-first, bounded, and safe to answer through a linked personal assistant surface.
 - Telegram-safe capabilities can return richer structure and fuller text.
 - BlueBubbles-safe capabilities are text-first, concise, and simpler than Telegram operator flows, and they now run through a real linked BlueBubbles companion channel.
-- Operator-only capabilities remain excluded from Alexa even when they exist in the graph.
 
 Current intended split:
 
-- Alexa-safe:
-  - daily guidance
-  - household and thread-aware guidance
-  - explicit memory controls
-  - bounded research briefs
-  - save/remind/follow-up flows when the channel edge confirms them safely
 - Telegram-safe:
   - the same shared assistant actions
   - richer formatting and longer research output
-  - operator/runtime surfaces that are intentionally not exposed on Alexa
+  - operator/runtime surfaces in the registered main control chat
 - BlueBubbles-safe:
   - daily guidance
   - rituals and follow-through prompts
@@ -141,30 +131,9 @@ Current intended split:
 
 In code, the graph can say a capability is allowed on Telegram but still keep execution on the operator/runtime lane. That is how `work.current_*` behaves today.
 
-## Alexa Natural Action Router
+## Shared Channel Actions
 
-Alexa still needs an interaction model and explicit intents, but those intents now map into shared capabilities where possible instead of branching into separate logic trees.
-
-Current shape:
-
-- explicit Alexa intents remain for high-signal voice asks
-- `ConversationalFollowupIntent` and `AnythingElseIntent` first try shared capability continuation
-- natural phrases can also match the shared capability router directly
-- bounded conversation state carries the active capability, subject, last recommendation, and safe follow-up hints
-
-That means both of these can now land in the same Andrea action:
-
-- Telegram: `what am I forgetting`
-- Alexa: `What am I forgetting?`
-
-The Alexa router and matcher live in:
-
-- [src/assistant-capability-router.ts](../src/assistant-capability-router.ts)
-- [src/alexa-dialogue.ts](../src/alexa-dialogue.ts)
-
-## Telegram And Alexa Shared Actions
-
-Telegram and Alexa are not made identical.
+Telegram and BlueBubbles are not made identical.
 
 Instead, they now share the same underlying assistant action when the action is channel-safe.
 
@@ -183,11 +152,6 @@ Examples now routed through the shared graph first:
 
 Channel shaping still happens at the edge:
 
-- Alexa:
-  - one lead sentence
-  - one or two short support lines
-  - chief-of-staff reads stay orienting instead of list-heavy
-  - optional Telegram handoff when a research answer is too long
 - Telegram:
   - richer text
   - stronger explainability
@@ -243,19 +207,18 @@ Andrea now has a bounded companion handoff layer on top of the shared capability
 
 The current model is intentionally narrow:
 
-- only Alexa-to-Telegram handoffs are supported
 - only explicit user-visible handoffs are allowed
-- only the registered main Telegram chat for the linked account is used as the target
+- only the registered main Telegram chat for the group is used as the target
 - no speculative or background cross-channel push is performed
 
 High-value handoff targets in this pass:
 
-- research summaries that are too rich for voice
+- research summaries that need a fuller view
 - knowledge-library summaries with supporting source detail
 - image-generation delivery when an artifact is already available
 - daily or household follow-up detail when the user asks for it explicitly
 
-Voice-triggered completion flows reuse existing systems instead of inventing new ones:
+Follow-up completion flows reuse existing systems instead of inventing new ones:
 
 - `save that for later` / `remember that for later` -> shared continuation -> existing follow-through persistence
 - `save that in my library` -> `knowledge.save_source`
@@ -332,9 +295,6 @@ Then it chooses a primary source:
 
 Current behavior by channel:
 
-- Alexa:
-  - short spoken answer
-  - optional Telegram handoff when the result is comparison-heavy or too long
 - Telegram:
   - fuller answer
   - richer synthesis text
@@ -389,10 +349,6 @@ By channel:
   - supporting sources section
   - route explanation
   - structured follow-up suggestions
-- Alexa:
-  - short saved-material summary
-  - source-aware phrasing
-  - Telegram handoff when the source detail is too large for voice
 - BlueBubbles:
   - concise text-first source summaries
 
@@ -409,7 +365,6 @@ Prepared capabilities:
 Current truth:
 
 - `media.image_generate` now has a bounded Telegram delivery path when OpenAI credentials are configured
-- Alexa treats image requests as request-and-deliver handoffs, not spoken media output
 - `media.image_edit` and `media.video_generate` remain prepared-only
 - if OpenAI credentials are missing, Andrea reports the exact blocker instead of pretending the provider is live
 
@@ -490,23 +445,14 @@ Useful pinned-Node debug commands:
 `debug:shared-capabilities` is the quickest operator-side smoke path for:
 
 - Telegram daily guidance through the shared graph
-- Alexa household guidance through the shared graph
-- Alexa and BlueBubbles Pulse behavior through the shared graph
-- Alexa and Telegram research shaping
+- BlueBubbles Pulse behavior through the shared graph
+- Telegram and BlueBubbles research shaping
 - operator-only safety gating
 
 ## External Pattern Sources And License Logic
 
 This architecture adapts patterns from permissively licensed or official sources. It does **not** paste large third-party code into Andrea.
 
-- [Alexa Skills Kit SDKs for Node.js](https://developer.amazon.com/en-US/docs/alexa/sdk/alexa-skills-kit-sdks.html)
-  - official Amazon documentation
-  - useful pattern: thin request edge, request handling, interceptors, and session attributes
-  - adopted as design only
-- [alexa-samples / skill-sample-nodejs-fact](https://github.com/alexa-samples/skill-sample-nodejs-fact)
-  - Apache-2.0
-  - useful pattern: explicit intent-to-domain mapping and concise voice-first response builders
-  - adapted as design only
 - [openai/openai-agents-js](https://github.com/openai/openai-agents-js)
   - MIT
   - useful pattern: explicit tool/capability registry, sessions, handoffs, and bounded orchestration

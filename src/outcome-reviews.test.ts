@@ -833,7 +833,7 @@ describe('outcome reviews', () => {
     const result = await deliverCompanionHandoff(
       {
         groupFolder: 'main',
-        originChannel: 'alexa',
+        originChannel: 'bluebubbles',
         voiceSummary: 'Send the fuller plan to Telegram.',
         payload: {
           kind: 'message',

@@ -12,7 +12,6 @@ import {
   listRealityVerificationNeeds,
   listRecentResponseFeedback,
   listStrategyLearningSignals,
-  listToolReliabilityRollups,
   listWorkingMemoryFrames,
   listBlackboardSnapshots,
   upsertBlackboardSnapshot,
@@ -25,6 +24,7 @@ import {
   type IntegrationStatus,
 } from './integration-doctor.js';
 import { buildRealityGroundingReport } from './reality-grounding.js';
+import { listCurrentToolReliabilityRollups } from './tool-reliability.js';
 import type {
   BlackboardSnapshotRecord,
   ControlPlaneChannel,
@@ -282,14 +282,8 @@ function summarizeToolReliability(rollups: ToolReliabilityRollup[]): {
   summary: string;
   unhealthy: ToolReliabilityRollup[];
   stale: ToolReliabilityRollup[];
-  optionalManual: ToolReliabilityRollup[];
 } {
-  const optionalManual = rollups.filter((rollup) =>
-    isOptionalManualReliabilitySubject(rollup.subjectId),
-  );
-  const coreRollups = rollups.filter(
-    (rollup) => !isOptionalManualReliabilitySubject(rollup.subjectId),
-  );
+  const coreRollups = rollups;
   const unhealthy = coreRollups.filter(
     (rollup) =>
       rollup.currentHealth === 'blocked' || rollup.currentHealth === 'degraded',
@@ -300,12 +294,6 @@ function summarizeToolReliability(rollups: ToolReliabilityRollup[]): {
       (rollup.currentHealth === 'unknown' ||
         rollup.sampleCount === 0 ||
         rollup.reliabilityScore < 0.5),
-  );
-  const optionalNeedsAttention = optionalManual.filter(
-    (rollup) =>
-      rollup.currentHealth !== 'healthy' ||
-      rollup.sampleCount === 0 ||
-      rollup.reliabilityScore < 0.5,
   );
   const parts: string[] = [];
   if (unhealthy.length) {
@@ -324,26 +312,13 @@ function summarizeToolReliability(rollups: ToolReliabilityRollup[]): {
         .join(', ')}`,
     );
   }
-  if (optionalNeedsAttention.length) {
-    parts.push(
-      `${optionalNeedsAttention.length} optional/manual: ${optionalNeedsAttention
-        .slice(0, 3)
-        .map((rollup) => `${rollup.subjectId} (${rollup.currentHealth})`)
-        .join(', ')}`,
-    );
-  }
   return {
     summary:
       parts.join('; ') ||
       `${rollups.length} reliability subjects tracked, none blocked, degraded, or stale.`,
     unhealthy,
     stale,
-    optionalManual,
   };
-}
-
-function isOptionalManualReliabilitySubject(subjectId: string): boolean {
-  return subjectId === 'integration:alexa';
 }
 
 function summarizeChanges(
@@ -489,7 +464,9 @@ export function buildCognitiveBlackboard(
       460,
     );
 
-  const rollups = dbReady ? listToolReliabilityRollups({ limit: 100 }) : [];
+  const rollups = dbReady
+    ? listCurrentToolReliabilityRollups({ limit: 100 })
+    : [];
   const providerHealth =
     input.providerHealthSnapshots ??
     collectProviderHealthSnapshotsWithRecentLiveEvidence(createdAt, {
@@ -623,11 +600,8 @@ export function formatBlackboardReport(
   record: BlackboardSnapshotRecord = buildCognitiveBlackboard({
     persist: false,
   }),
-  options: { channel?: ControlPlaneChannel } = {},
+  _options: { channel?: ControlPlaneChannel } = {},
 ): string {
-  if (options.channel === 'alexa') {
-    return `${record.recommendedNextStep} ${record.approvalNeedsCount ? `${record.approvalNeedsCount} item(s) are waiting on you.` : ''}`.trim();
-  }
   return [
     '*Cognitive Blackboard*',
     `Request: ${record.currentRequestSummary}`,
@@ -661,12 +635,10 @@ export function isBlackboardNaturalRequest(text: string): boolean {
 
 export function formatBlackboardNaturalResponse(
   text: string,
-  options: { channel?: ControlPlaneChannel } = {},
+  _options: { channel?: ControlPlaneChannel } = {},
 ): string {
   const record = buildCognitiveBlackboard({ requestText: text });
-  if (options.channel === 'alexa') {
-    return formatBlackboardReport(record, options);
-  }
+
   const lines: string[] = [];
   lines.push(`Right now: ${record.likelyIntent}.`);
   if (record.activeGoalSummary) {

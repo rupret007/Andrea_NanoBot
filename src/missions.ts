@@ -51,7 +51,7 @@ export interface MissionPriorContext {
 }
 
 export interface MissionTurnInput {
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
   text: string;
   mode: 'propose' | 'view' | 'manage' | 'explain';
@@ -831,29 +831,17 @@ function isMissionBlockerExplainRequest(text: string): boolean {
 
 function formatMissionReply(
   input: Pick<MissionTurnInput, 'channel' | 'mode' | 'text'>,
-  channel: MissionTurnInput['channel'],
+  _channel: MissionTurnInput['channel'],
   snapshot: MissionPlanSnapshot,
   stepFocus: MissionStepRecord | null,
 ): string {
   const blocker = snapshot.blockers[0];
   const action = snapshot.suggestedActions[0]?.label;
-  const lowerFirst = (value: string) =>
-    value ? `${value.charAt(0).toLowerCase()}${value.slice(1)}` : value;
+
   if (
     input.mode === 'explain' &&
     isMissionBlockerExplainRequest(input.text || '')
   ) {
-    if (channel === 'alexa') {
-      if (blocker) {
-        return stepFocus
-          ? `The main blocker right now is this: ${blocker} Next, clear it by ${stepFocus.title}.`
-          : `The main blocker right now is this: ${blocker}`;
-      }
-      return action
-        ? `I do not see a major blocker right now. Next, ${lowerFirst(action)}.`
-        : 'I do not see a major blocker right now.';
-    }
-
     return buildSignatureFlowText({
       lead: blocker
         ? `The main blocker right now is this: ${blocker}`
@@ -864,24 +852,6 @@ function formatMissionReply(
     });
   }
 
-  if (channel === 'alexa') {
-    const parts = [snapshot.mission.summary];
-    const summaryKey = snapshot.mission.summary.toLowerCase();
-    if (stepFocus) {
-      const stepTitle = lowerFirst(stepFocus.title);
-      if (!summaryKey.includes(stepTitle)) {
-        parts.push(`Next, ${stepTitle}.`);
-      }
-    }
-    if (blocker) {
-      parts.push(
-        `The main blocker is ${blocker.replace(/\.$/, '').toLowerCase()}.`,
-      );
-    } else if (action) {
-      parts.push(`If you want, I can ${lowerFirst(action)}.`);
-    }
-    return parts.join(' ');
-  }
   return buildSignatureFlowText({
     lead: snapshot.mission.summary,
     detailLines: snapshot.steps.map(

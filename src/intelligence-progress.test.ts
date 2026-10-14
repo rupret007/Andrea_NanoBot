@@ -139,7 +139,7 @@ function input(
       generatedAt,
       entries: [
         proof('Telegram bot proof', 'live_proven', false),
-        proof('Alexa signed IntentRequest proof', 'near_live_only', false),
+        proof('Optional provider proof', 'near_live_only', false),
         proof(
           'BlueBubbles same-thread message-action proof',
           'live_proven',
@@ -152,7 +152,7 @@ function input(
       dailyCoreProofDebtCount: 0,
       optionalProofDebtCount: 1,
       repoWorkRequiredCount: 0,
-      nextAction: 'Alexa signed IntentRequest proof: manual device proof.',
+      nextAction: 'Optional provider proof: manual provider proof.',
       privacyJson: '{}',
     },
     cognitionTraceHealth: 1,
@@ -303,7 +303,9 @@ describe('intelligence progress gate', () => {
   it('keeps external proof debt separate from repo intelligence regression', () => {
     const report = buildIntelligenceProgressReport(input(), baselineFrom());
 
-    expect(report.criticalRegressions.join(' ')).not.toMatch(/Alexa/);
+    expect(report.criticalRegressions.join(' ')).not.toMatch(
+      /Optional provider/,
+    );
     expect(report.dimensionScores.tool_truth_proof_honesty).toBe(1);
     expect(report.sourceScores.capabilityDailyCoreRatio).toBe(1);
   });

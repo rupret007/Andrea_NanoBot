@@ -73,7 +73,6 @@ Andrea creates or updates communication context only when the user explicitly br
 
 - Telegram
 - BlueBubbles
-- an Alexa handoff / continuation
 
 Out of scope in v1:
 
@@ -249,18 +248,11 @@ The reminder must still be offered for one valid current named direct
 conversation. Empty, already-answered, changed, group or untrusted contexts
 cannot create it. A different reminder body or compound command such as
 `remind me in 30 minutes and send it` does not inherit the named person.
-Alexa does not gain this path. Timing alone creates no draft, calendar event,
+Timing alone creates no draft, calendar event,
 contact message, provider call or history refresh. The next human step is
 still `draft Bob`; the existing exact send fence remains unchanged.
 
 ## Channel Behavior
-
-Alexa:
-
-- concise orientation only
-- good for `what do I owe people`, `what's still open with Candace`, `draft that for me`, and `remind me to answer later`
-- does not read long conversation detail aloud
-- can hand richer detail to Telegram or BlueBubbles
 
 Telegram:
 
@@ -399,7 +391,7 @@ Focused validation:
 
 - `node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/communication-forget.test.ts src/communication-forget-db.test.ts src/assistant-capability-input.test.ts`
 
-- `node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/communication-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/alexa-conversation.test.ts src/daily-companion.test.ts`
+- `node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/communication-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/daily-companion.test.ts`
 - `npm run debug:communication-companion`
 
 Broader validation:

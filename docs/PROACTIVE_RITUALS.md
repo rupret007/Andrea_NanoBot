@@ -83,8 +83,7 @@ V1 stays conservative:
 - morning and evening rituals can be scheduled, but start inactive until the user opts in
 - midday re-grounding starts as suggested or on-request, not active
 - household and family automatic surfacing stay off until explicitly enabled
-- Alexa stays on-demand only
-- scheduled ritual delivery uses Telegram, not Alexa
+- scheduled ritual delivery uses Telegram
 
 There is no hidden bulk proactivity and no surprise push behavior.
 
@@ -148,7 +147,7 @@ Andrea should be able to say why something surfaced:
 - household context
 - saved library material
 
-## Telegram Vs Alexa
+## Channel Behavior
 
 Telegram is the richer ritual surface.
 
@@ -159,18 +158,6 @@ Typical Telegram ritual output includes:
 - one suggested action or reminder candidate
 - optional “why this came up”
 - richer control turns
-
-Alexa stays concise and voice-safe.
-
-Typical Alexa ritual output includes:
-
-- one lead sentence
-- one or two short support lines
-- a natural follow-up prompt when useful
-- no long provenance dump
-
-Alexa can use rituals on demand.
-Alexa does not become a scheduled push surface.
 
 ## Natural Controls
 
@@ -219,7 +206,6 @@ npm test
 ## Intentional Limits
 
 - no hidden or surprise proactive behavior
-- no Alexa background push
 - no generic “productivity score”
 - no separate task system beside reminders and life threads
 - midday and household automatic surfacing stay conservative unless explicitly enabled

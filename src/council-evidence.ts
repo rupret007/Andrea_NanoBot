@@ -88,7 +88,7 @@ export function buildCouncilEvidencePack(
   const includeIntegrationStatus =
     input.taskFamily === 'operator' ||
     input.taskFamily === 'code' ||
-    /\b(integration|service|runtime|gateway|bridge|bluebubbles|telegram|alexa|openclaw)\b/i.test(
+    /\b(integration|service|runtime|gateway|bridge|bluebubbles|telegram|openclaw)\b/i.test(
       input.goal,
     );
   const cards: CouncilEvidenceCard[] = [

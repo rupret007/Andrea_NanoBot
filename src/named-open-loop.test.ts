@@ -212,12 +212,7 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).not.toContain(NAMED_OPEN_LOOP_SAVE_PROMPT);
   });
 
-  it('keeps Alexa concise and does not add the handoff after real tracked items', () => {
-    expect(
-      appendGenericOpenLoopNoCrawlNotice('alexa', 'Nothing is open.', true),
-    ).toBe(
-      "Nothing is open. I did not crawl unnamed inbox threads. Name one person and ask what's still open with them.",
-    );
+  it('does not add the handoff after real tracked items', () => {
     const withTrackedItems = appendGenericOpenLoopNoCrawlNotice(
       'bluebubbles',
       'You still owe one reply.',
@@ -225,36 +220,6 @@ describe('named who-do-I-owe copy without sending', () => {
     );
     expect(withTrackedItems).toContain(GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE);
     expect(withTrackedItems).not.toContain('Next: name one person');
-  });
-
-  it('keeps Alexa named-open-loop next step off yes-to-draft', () => {
-    const gist = buildThreadGroundedSummaryGist({
-      chatName: 'Bob',
-      isGroup: false,
-      turns: [
-        {
-          content: 'Practice moved to eight tonight, just keeping you posted.',
-          isFromMe: false,
-          speakerLabel: 'Bob',
-        },
-      ],
-    });
-    const reply = formatNamedMessagesOpenLoopReply({
-      channel: 'alexa',
-      personLabel: 'Bob',
-      isGroup: false,
-      gist,
-      latestInboundText:
-        'Practice moved to eight tonight, just keeping you posted.',
-    });
-    expect(reply).toContain(
-      'Say draft Bob to create an unsent draft, or remind me later, or save under thread.',
-    );
-    expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
-    expect(reply).not.toContain('or yes to create');
-    expect(reply).not.toContain('or yes for an unsent draft');
-    expect(reply).not.toContain('send it');
-    expect(reply).not.toContain('remind me Friday at 9am');
   });
 });
 
@@ -419,15 +384,6 @@ describe('draft-for-Bob-yes creates an unsent draft, not a send', () => {
     expect(reply).toContain('`send it now`');
     expect(reply).toContain('`send now`');
     expect(reply).toContain('Yes still will not send');
-    expect(
-      appendNamedOpenLoopDraftCreatedNotice(
-        'alexa',
-        'I drafted a reply.',
-        'Bob',
-      ),
-    ).toBe(
-      'I drafted a reply. This draft for Bob stays unsent. Yes will not send.',
-    );
   });
 });
 
@@ -665,15 +621,6 @@ describe('named open-loop remind-me-later stays off the send fence', () => {
     expect(reply).toContain('`send it`');
     expect(reply).toContain('`send it now`');
     expect(reply).toContain('`send now`');
-    expect(
-      appendNamedOpenLoopRemindCreatedNotice(
-        'alexa',
-        "Okay. I'll remind you tonight to reply to Bob.",
-        'Bob',
-      ),
-    ).toBe(
-      "Okay. I'll remind you tonight to reply to Bob. I did not send anything. Say draft Bob when you want an unsent draft.",
-    );
   });
 });
 
@@ -814,15 +761,6 @@ describe('named open-loop save-under-thread stays off the send fence', () => {
     expect(reply).toContain('`send it`');
     expect(reply).toContain('`send it now`');
     expect(reply).toContain('`send now`');
-    expect(
-      appendNamedOpenLoopSaveCreatedNotice(
-        'alexa',
-        'Okay. I saved that under Bob.',
-        'Bob',
-      ),
-    ).toBe(
-      'Okay. I saved that under Bob. I did not send anything. Say draft Bob when you want an unsent draft.',
-    );
   });
 });
 

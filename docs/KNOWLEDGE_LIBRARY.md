@@ -7,7 +7,7 @@ Andrea now has a bounded **Knowledge Library** for saved source material.
 Knowledge Library is the core of the saveable research journey:
 
 - ask a research question
-- get the short answer on Alexa or the calmer answer on Telegram
+- get a source-grounded answer on Telegram
 - ask for the fuller version
 - save the useful result to the library
 - come back later and ask what your saved material says
@@ -134,7 +134,7 @@ The route explanation stays explicit:
 - which saved sources matched
 - whether outside research was intentionally excluded or combined
 
-## Telegram And Alexa Behavior
+## Channel Behavior
 
 Telegram is the richer library surface.
 
@@ -145,15 +145,6 @@ Typical Telegram output includes:
 - supporting sources
 - route explanation
 - follow-up suggestions such as save, compare, or combine with outside research
-
-Alexa stays source-aware but voice-safe.
-
-Typical Alexa behavior:
-
-- short spoken summary
-- mention that Andrea is using saved material
-- name at most one or two source titles when helpful
-- hand off to Telegram when the detailed source view would be too long for voice
 
 ## User Controls
 

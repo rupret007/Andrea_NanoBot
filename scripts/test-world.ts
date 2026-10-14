@@ -58,7 +58,7 @@ const providers: ProviderHealthSnapshot[] = [
 const integrationReport: IntegrationDoctorReport = {
   generatedAt: checkedAt,
   summary: {
-    total: 3,
+    total: 2,
     healthy: 1,
     actionNeeded: 1,
     needsProof: 1,
@@ -75,7 +75,8 @@ const integrationReport: IntegrationDoctorReport = {
       lastHealthyAt: checkedAt,
       lastFailure: '',
       blockerOwner: 'none',
-      nextAction: 'Use fresh calendar read windows before high-certainty answers.',
+      nextAction:
+        'Use fresh calendar read windows before high-certainty answers.',
       repairability: 'status_only',
       safeActions: ['npm run debug:google-calendar'],
       detail: 'Validated calendar read proof.',
@@ -95,21 +96,6 @@ const integrationReport: IntegrationDoctorReport = {
       safeActions: ['npm run debug:bluebubbles -- --live'],
       detail: 'Transport is ready, proof debt remains.',
     },
-    {
-      integrationId: 'alexa',
-      label: 'Alexa',
-      state: 'needs_proof',
-      credentialState: 'configured',
-      transportState: 'healthy',
-      proofState: 'needs_proof',
-      lastHealthyAt: null,
-      lastFailure: 'Signed IntentRequest proof is missing.',
-      blockerOwner: 'manual',
-      nextAction: 'Run one signed Alexa invocation.',
-      repairability: 'proof_drill',
-      safeActions: ['npm run debug:alexa-conversation -- --review'],
-      detail: 'Public endpoint is reachable, live invocation proof is missing.',
-    },
   ],
   secretsRedacted: true,
 };
@@ -128,7 +114,9 @@ const episode = beginAgentOSEpisode({
   selectedSkillEvidenceLevel: 'strong',
   providerHealthSnapshots: providers,
 });
-const agentOSReport = buildAgentOSReport({ episodeId: episode.episode.episodeId });
+const agentOSReport = buildAgentOSReport({
+  episodeId: episode.episode.episodeId,
+});
 const logic = beginLogicKernelRun({
   subject: 'world model test subject',
   agentOSReport,
@@ -176,8 +164,15 @@ const storedNeeds = listWorldModelVerificationNeeds({
   limit: 200,
 });
 
-assert.ok(storedSnapshots.some((item) => item.snapshotId === report.snapshot.snapshotId));
-assert.ok(report.evidenceRefs.length >= 6, 'world model should compose multiple evidence classes');
+assert.ok(
+  storedSnapshots.some(
+    (item) => item.snapshotId === report.snapshot.snapshotId,
+  ),
+);
+assert.ok(
+  report.evidenceRefs.length >= 6,
+  'world model should compose multiple evidence classes',
+);
 assert.ok(report.claims.some((claim) => claim.domain === 'providers'));
 assert.ok(report.claims.some((claim) => claim.domain === 'bluebubbles'));
 assert.ok(report.claims.some((claim) => claim.domain === 'logic'));
@@ -200,11 +195,14 @@ assert.ok(storedClaims.length >= report.claims.length);
 assert.ok(storedEvidence.length >= report.evidenceRefs.length);
 assert.ok(storedNeeds.length >= report.verificationNeeds.length);
 
-const serialized = JSON.stringify({ report, storedSnapshots, storedClaims, storedEvidence, storedNeeds });
-assert.doesNotMatch(
-  serialized,
-  SECRET_RE,
-);
+const serialized = JSON.stringify({
+  report,
+  storedSnapshots,
+  storedClaims,
+  storedEvidence,
+  storedNeeds,
+});
+assert.doesNotMatch(serialized, SECRET_RE);
 
 console.log(
   JSON.stringify(

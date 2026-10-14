@@ -30,11 +30,11 @@ const DEFAULT_PROMPTS = [
 
 function parseArgs(argv: string[]): {
   groupFolder: string;
-  channel: 'telegram' | 'alexa';
+  channel: 'telegram';
   prompts: string[];
 } {
   let groupFolder = 'main';
-  let channel: 'telegram' | 'alexa' = 'telegram';
+  let channel: 'telegram' = 'telegram';
   const prompts: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -47,7 +47,7 @@ function parseArgs(argv: string[]): {
     }
     if (value === '--channel' && argv[i + 1]) {
       const next = argv[i + 1]!;
-      if (next === 'telegram' || next === 'alexa') {
+      if (next === 'telegram') {
         channel = next;
       }
       i += 1;
@@ -70,7 +70,9 @@ async function main(): Promise<void> {
     ...process.env,
     ...readEnvFile([...CALENDAR_ENV_KEYS]),
   };
-  const tasks = getAllTasks().filter((task) => task.group_folder === groupFolder);
+  const tasks = getAllTasks().filter(
+    (task) => task.group_folder === groupFolder,
+  );
   const timeZone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
 

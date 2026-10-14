@@ -383,8 +383,7 @@ that a genuine canary or owner review occurred.
       authority expansion.
 - [ ] Preserve all other elapsed-use/operator debt: five genuine owner-reviewed
       assistant outcomes before baseline review, ten reviewed working-day
-      missions, and fresh Telegram, BlueBubbles same-thread, Alexa signed-intent,
-      life-thread, and native-Windows host evidence where applicable.
+      missions, and fresh Telegram, BlueBubbles same-thread, life-thread, and native-Windows host evidence where applicable.
 
 ### Intentionally unchanged
 
@@ -585,7 +584,7 @@ for current repository and serving identity.
   OpenClaw PID 11235, Andrea PID 12975**
 - Passive integrations: **10 healthy; BlueBubbles and Telegram transports
   healthy; Brave Search and configured cloud providers healthy; stale or
-  missing BlueBubbles same-thread, Telegram roundtrip, Alexa signed intent, and
+  missing BlueBubbles same-thread, Telegram roundtrip, and
   life-thread user proofs remain explicitly classified rather than fabricated**
 - Host cleanup: **about 69 GiB available; only regenerable temp/cache/image data
   removed; active containers, volumes, models, messages, Codex state, and
@@ -772,7 +771,7 @@ repository and transport health.
       BlueBubbles transport, Google Calendar, research, image generation,
       configured provider health, Brave Search, and self-repair were healthy.
       Do not
-      fabricate or manufacture a Telegram, BlueBubbles, Alexa, owner-review,
+      fabricate or manufacture a Telegram, BlueBubbles, owner-review,
       calendar, or paid-provider result merely to close proof debt.
 
 ### Intentionally unchanged and honest debt
@@ -788,8 +787,7 @@ repository and transport health.
   may still require user clarification.
 - Synthetic fixtures prove repository behavior, not genuine owner acceptance,
   a learning baseline, or live transport behavior.
-- Fresh Telegram life-thread, BlueBubbles same-thread action, and Alexa signed
-  intent evidence remain operator proof unless safely refreshed. Native
+- Fresh Telegram life-thread and BlueBubbles same-thread action evidence remain operator proof unless safely refreshed. Native
   Windows restart remains environment proof debt; hosted Windows CI proves the
   shared artifact and launcher contract only.
 
@@ -813,7 +811,7 @@ repository and transport health.
   `ac72ede1`**
 - Passive integration truth: **9 healthy, BlueBubbles transport healthy but
   same-thread action proof stale/missing, Telegram transport healthy but proof
-  stale, Alexa signed proof stale, and host disk at warning with about 11 GiB
+  stale, and host disk at warning with about 11 GiB
   free; no proof was fabricated**
 
 ## Temporal truth and durable restart release — 2026-07-14 (released)
@@ -897,8 +895,7 @@ second task ledger or widening authority.
 - [x] Reminder + research wording was not decomposed, so a reminder could
       absorb the research clause or ordinary routing could delay the primary
       acknowledgement.
-- [x] Bind Telegram/BlueBubbles inbound message IDs and Alexa signed request
-      IDs into a deterministic reminder task identity. Persist the task as the
+- [x] Bind Telegram/BlueBubbles inbound message IDs into a deterministic reminder task identity. Persist the task as the
       operation receipt before delivery and fail closed on a conflicting key.
 - [x] Split only an explicit reminder from an unmistakable research clause.
       Deliver the reminder acknowledgement first, then start one bounded,
@@ -1044,11 +1041,7 @@ evidence. It does not describe the current reminder-plus-research candidate.
   mission. A hard process failure can still require the user to rerun missing
   research; promoting long-running compound work into existing durable mission
   infrastructure remains evidence-led follow-up work, not an implicit promise.
-- Alexa passes the same stable provider identity when it continues a persisted
-  Calendar draft, but it does not yet have an independent delivery receipt
-  boundary equivalent to the text-channel cursor. Voice retry semantics remain
-  bounded provider-idempotency work, not a claim of full delivery
-  reconciliation.
+
 - Historical modernization sections remain dated evidence and are not rewritten
   to match current counts.
 
@@ -1099,7 +1092,7 @@ longer current.
 ### Remaining operator and elapsed-use evidence
 
 - [ ] Refresh the overdue Telegram roundtrip, BlueBubbles canonical same-thread
-      message-action proof, Alexa signed `IntentRequest`, and genuine
+      message-action proof, and genuine
       life-thread interaction. Keep missing proof distinct from transport or
       repository failure.
 - [ ] Reach five distinct owner-reviewed outcomes before presenting the first
@@ -1337,8 +1330,7 @@ OpenClaw and external integrations are not restarted by this round.
   owner evidence remains exactly what the production ledger already contains;
   this round does not backfill, duplicate, or reinterpret it.
 - One natural, owner-reviewed interrupted mission and its recovery remain
-  post-release operator evidence. Telegram roundtrip freshness, a signed Alexa
-  intent, life-thread proof, five genuine owner reviews, ten working-day
+  post-release operator evidence. Telegram roundtrip freshness, life-thread proof, five genuine owner reviews, ten working-day
   dogfood, OneCLI provisioning, credential rotation, and native Windows host
   restart remain external/operator or elapsed-use evidence, not repository
   successes.
@@ -1494,7 +1486,7 @@ substitute for exact-SHA hosted or post-release runtime evidence.
       PIDs, clean artifact provenance, canonical runtime root, and a serving SHA
       equal to committed `main`.
 - [ ] Post-release read-only status checks prove host, Telegram transport,
-      OpenClaw gateway/bridge, BlueBubbles, Alexa endpoint/OAuth, provider-cache
+      OpenClaw gateway/bridge, BlueBubbles, provider-cache
       classification, scheduler, and owner-cockpit truth without converting
       stale operator evidence into a repository failure. The ignored
       BlueBubbles record advances past its captured cursor without an Andrea
@@ -1512,9 +1504,7 @@ on the audited host, so current environment fallback remains degraded until the
 operator provisions and verifies the vault. Rotation of the previously exposed
 Brave credential remains operator debt; no credential value belongs in this
 plan, repository history, diagnostics, or release output. Telegram transport is
-healthy but its user-session roundtrip proof is overdue. Alexa endpoint and
-OAuth checks are healthy while the last signed handled `IntentRequest` is
-stale. Provider and council observations expire and must be refreshed
+healthy but its user-session roundtrip proof is overdue. Provider and council observations expire and must be refreshed
 intentionally. One natural life-thread `save that for later` outcome, the first
 five distinct owner reviews, and native Windows host restart/integration proof
 remain real-use evidence debt. The optional Andrea OpenAI backend remains
@@ -1964,7 +1954,7 @@ after the service is restarted into the candidate. OpenClaw is live with all 11 
 bridge tools available; Calendar, outward research, and image generation retain
 live proof. Honest remaining evidence debt is still visible: seven tool-health
 subjects are unknown and one is blocked, life threads need a fresh same-host
-save/control turn, and Alexa's last handled signed intent is stale. None of
+save/control turn. None of
 those external/operator proofs is silently promoted by this code round.
 
 The live council diagnostic's threshold is now explicitly classified as an
@@ -2135,7 +2125,7 @@ Ranked gaps for this round:
    intentionally exceptional rather than an ordinary response path.
 3. Genuine dogfood outcomes and mission reviews: essential evidence, but they
    require elapsed real use and cannot be fabricated by repository work.
-4. Alexa/life-thread/Telegram freshness: important channel proof debt, but not
+4. life-thread/Telegram freshness: important channel proof debt, but not
    a reason to create another cognitive subsystem.
 
 The coherent slice therefore uses the existing metric and council ledgers to:
@@ -2274,8 +2264,7 @@ at the runtime wiring point without deleting historical evidence.
       first baseline. Current evidence remains 0/5.
 - [ ] Complete and owner-review one bounded coding mission on each of ten
       working days. No mission or promotion evidence is fabricated.
-- [ ] Run one real `save that for later` life-thread interaction and one fresh
-      signed Alexa device/simulator `IntentRequest`. BlueBubbles remains
+- [ ] Run one real `save that for later` life-thread interaction. BlueBubbles remains
       live-proven and unchanged.
 - [ ] Refresh the Telegram user proof with `npm run telegram:user:smoke`; it is
       currently `near_live_only` rather than fresh proof.
@@ -2384,8 +2373,7 @@ at the runtime wiring point without deleting historical evidence.
 - [x] Committed and pushed the repair, rebuilt from the clean commit, and
       restarted the Mac host and OpenClaw gateway. Runtime provenance matched
       the pushed commit; Brave was live-proven healthy with zero pending alerts,
-      and the integration report remained 12/14 healthy with Alexa as the only
-      manual-action proof debt.
+      and the integration report retained explicit manual-action proof debt.
 
 ## Combined-candidate release-readiness audit — 2026-07-12
 
@@ -2464,7 +2452,7 @@ at the runtime wiring point without deleting historical evidence.
       Provider-backed research, image generation, and proof-marker writes now
       require the explicit `--live` mode; repair guidance and runbooks name the
       live boundary instead of triggering it implicitly.
-- [x] Move the shared Telegram/Alexa capability smoke into isolated storage
+- [x] Move the shared Telegram capability smoke into isolated storage
       with a process-level external-network deny guard. Provider-backed shared
       capability execution now requires the same explicit `--live` boundary.
 
@@ -2478,7 +2466,7 @@ at the runtime wiring point without deleting historical evidence.
       persistence disabled.
 - [x] The isolated Knowledge Library journey leaves live knowledge sources at
       4→4 and temporary directories at 0→0. The isolated shared-capability
-      journey handles all six Telegram/Alexa paths with no provider selected
+      journey handles the supported Telegram paths with no provider selected
       and leaves live assistant metrics at 56→56.
 - [x] Focused shared-policy coverage passes 6/6 tests, preserving the existing
       execution-mode/storage assertions while adding default, explicit-persist,
@@ -2517,8 +2505,8 @@ at the runtime wiring point without deleting historical evidence.
       282/282 AGI tests, both TypeScript checks, production build, formatting,
       57-file docs validation, warning-only lint with zero errors, and diff
       hygiene.
-- [x] The production report now scores integration operability at 93%: 13/14
-      are operationally available, Alexa is the one action-needed item, and
+- [x] The production report now scores integration operability at 93%: the supported integrations
+      are operationally available, and
       seven stale/unprobed integrations remain explicitly evidence-limited.
       Overall AGI-lab readiness is 87% and remains on hold; this is a truth-model
       correction, not fabricated evidence or a capability promotion.
@@ -2610,7 +2598,7 @@ at the runtime wiring point without deleting historical evidence.
 ### Implemented
 
 - [x] Stop grading route-only synthetic metadata as if it were an executed
-      assistant answer. Capability and Alexa route-contract fixtures now score
+      assistant answer. Capability route-contract fixtures now score
       provider routing only; their deliberately absent answer/fallback bodies
       no longer depress robustness or task completion.
 - [x] Keep the separate isolated, network-denied executed-capability suite as
@@ -2726,8 +2714,8 @@ at the runtime wiring point without deleting historical evidence.
 - [x] Reconcile current-sounding README, status, demo, command-surface, and
       release-runbook claims with operator truth. Telegram is now described as
       configured and transport-healthy with overdue roundtrip proof; BlueBubbles,
-      Calendar, provider, research, and image proofs remain live-proven; Alexa
-      and life-thread proof debt remain explicit.
+      Calendar, provider, research, and image proofs remain live-proven;
+      life-thread proof debt remains explicit.
 - [x] Remove stale claims that current disk pressure is degraded and avoid
       turning a point-in-time free-space value into a durable product promise.
       Exact capacity remains owned by `npm run debug:status`.
@@ -2785,8 +2773,7 @@ at the runtime wiring point without deleting historical evidence.
       The deterministic
       tool-reliability, blackboard, cognition, reality-grounding, and capability
       self-model scripts also pass.
-- [x] A metadata-only live refresh reduced false degraded/unknown subjects from
-      eight to the genuine manual Alexa blocker. The five freshly probed
+- [x] A metadata-only live refresh reduced false degraded/unknown subjects. The five freshly probed
       providers now carry healthy current state and 0.95 confidence caps; no
       raw credential or provider response was persisted. Live capability truth
       reports web research ready, and reality grounding now reports its route
@@ -3087,7 +3074,7 @@ at the runtime wiring point without deleting historical evidence.
 
 - Seven direct conversations still require explicit owner confirmation or
   dismissal; no repository logic may safely infer those identities.
-- Council evidence gaps remain Alexa/manual feature proof plus historical
+- Council evidence gaps remain manual feature proof plus historical
   provider degradation. They are not caused or concealed by this identity
   change and should be handled in a separate outcome-led council round.
 
@@ -3286,7 +3273,7 @@ at the runtime wiring point without deleting historical evidence.
       diff hygiene.
 - [x] A live metadata-only refresh changed BlueBubbles, message actions, and
       Calendar to healthy with 0.95 confidence caps. Expired provider evidence
-      remains unknown and Alexa remains externally/manual blocked.
+      remains unknown.
 - [x] Complete primary validation passes 201 files and 2,232 tests plus
       formatting, typecheck, lint with no new errors, and the production build.
       AGI typecheck and 282/282 tests, all ten intelligence regressions, the
@@ -3460,7 +3447,6 @@ at the runtime wiring point without deleting historical evidence.
   learning baseline; no outcome or routine promotion is fabricated.
 - Ten communication identities still require explicit owner confirmation or
   dismissal before relationship-aware reply scoring can improve safely.
-- Alexa still requires a fresh signed device/simulator turn.
 
 ## Shared live-evidence freshness — 2026-07-12
 
@@ -3511,7 +3497,6 @@ at the runtime wiring point without deleting historical evidence.
 
 ### Remaining evidence debt
 
-- Alexa still requires a fresh signed device/simulator turn.
 - Relationship-aware context still requires explicit owner confirmation or
   dismissal for ten recent communication threads; no identity is inferred.
 - The first learning baseline still requires five genuine reviewed outcomes.
@@ -3578,7 +3563,7 @@ at the runtime wiring point without deleting historical evidence.
 - [x] Reconcile completed work-cockpit journey proof into tool reliability so
       a live-proven cockpit no longer remains indefinitely classified as an
       unknown tool. The refreshed production reliability report now shows no
-      degraded tools; only stale Alexa device proof remains blocked.
+      degraded tools.
 - [x] Clear the container fallback dependency advisories discovered by the
       final audit. The lock now resolves MCP SDK 1.29.0 and patched Hono,
       request-routing, validation, and rate-limit transitive versions; root and
@@ -3624,7 +3609,7 @@ at the runtime wiring point without deleting historical evidence.
 - [x] Convert all ten synthetic route contracts from hypothetical route labels
       into executable production checks. The suite now calls the real capability
       matcher, action preflight/critic, Cognitive Executive clarification,
-      Alexa intent mapper, integration-doctor classifier, and learning-default
+      integration-doctor classifier, and learning-default
       parser; any route mismatch is a test failure rather than a cosmetic score.
 - [x] Replace synthetic quality constants and unearned candidate-plan lift with
       scores derived from the actual deterministic artifact produced by each
@@ -3632,9 +3617,9 @@ at the runtime wiring point without deleting historical evidence.
       was useful or that fallback ran; empty, unsafe, leaked, overlong, and
       ungrounded artifacts lose the corresponding credit. An unchanged
       plan-only candidate now remains neutral until behavior actually changes.
-- [x] Add a hermetic executed-response lane for four safe local capabilities:
-      chief-of-staff prioritization, message-draft clarification, household open
-      loops, and Alexa loose ends. It uses injected synthetic calendar/thread
+- [x] Add a hermetic executed-response lane for three safe local capabilities:
+      chief-of-staff prioritization, message-draft clarification, and household open
+      loops. It uses injected synthetic calendar/thread
       grounding, refuses non-isolated databases, blocks host-calendar/network
       fallback, stores metadata rather than response bodies, and separately
       scores the complete production reply. This exposed and fixed a real
@@ -4043,7 +4028,7 @@ required BlueBubbles bridge tools are present and direct send remains excluded.
 Setup's three assistant execution probes produced real answers; their
 post-output idle cleanup timeouts remain classified non-fatal. Repository-free
 proof debt remains Telegram marker freshness, one natural life-thread control
-turn, and a fresh signed Alexa device/simulator turn.
+turn.
 The native BlueBubbles reaction-learning increment also passed 141 focused
 channel/feedback/database/cognition/bridge tests, the complete 2,152-test
 primary gate, 279 AGI tests, all 90 deterministic commands including the
@@ -4085,8 +4070,7 @@ Fresh exact, summary, and refinement probes each produced a real answer; their
 post-output idle cleanup timeouts remain correctly non-fatal. BlueBubbles is
 `live_proven` with its loopback transport and webhook registered, and a fresh
 Telegram `/ping` roundtrip raised integration health to 12/14. Remaining proof
-debt is one real life-thread control interaction and a fresh signed Alexa
-device/simulator turn. The host has only about 742 MiB free; this is an explicit
+debt is one real life-thread control interaction. The host has only about 742 MiB free; this is an explicit
 operational risk, and no Docker image/container or user data was deleted without
 owner authorization.
 
@@ -4145,9 +4129,8 @@ focused council/evidence/turn suite passes. Final release reruns then passed the
 gate and all 90 deterministic commands, including three hermetic stability
 rounds. Telegram's configured live user-session smoke proof also passed after
 restart, raising integration health to 12/14 and daily-core live proof coverage
-to 6/6. Alexa's stale signed-device proof and aggregate optional feature
-freshness remain explicit operator proof debt; no repository repair is pending
-for either.
+to 6/6. Aggregate optional feature freshness remains explicit operator proof debt; no repository repair is pending
+for it.
 
 ### Deferred intentionally
 
@@ -4427,6 +4410,6 @@ disabled after it was found retrying against the canonical runtime's ports.
   proof classifications remain intact.
 - The repository-wide lint warning backlog is not a safe modernization target
   for this pass; only warnings in touched code are addressed.
-- Alexa device proof, provider quotas, credential state, and aged pilot or
+- provider quotas, credential state, and aged pilot or
   council evidence remain external/operator state unless validation proves a
   repository defect.

@@ -349,7 +349,7 @@ const DEFAULT_RUNTIME_CAPABILITY_DESCRIPTOR_INPUTS = [
       { id: 'search', effect: 'read' },
       { id: 'open', effect: 'read' },
     ],
-    sourceChannels: ['alexa', 'telegram'],
+    sourceChannels: ['telegram'],
     confirmationPolicy: {
       mode: 'none',
       actions: [],

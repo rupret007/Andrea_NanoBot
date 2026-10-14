@@ -4,7 +4,7 @@ import {
   getCommunicationThread,
 } from './db.js';
 
-type Channel = 'telegram' | 'bluebubbles' | 'alexa';
+type Channel = 'telegram' | 'bluebubbles';
 
 interface ReviewSurface {
   ownerReviewAllowed?: boolean;

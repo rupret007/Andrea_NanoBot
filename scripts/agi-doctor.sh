@@ -83,7 +83,7 @@ fi
 section "Config"
 if [[ -f .env ]]; then
   ok ".env=present"
-  for key in ASSISTANT_NAME TELEGRAM_BOT_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY ANDREA_OPENAI_BACKEND_ENABLED ALEXA_PORT BLUEBUBBLES_PORT; do
+  for key in ASSISTANT_NAME TELEGRAM_BOT_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY ANDREA_OPENAI_BACKEND_ENABLED BLUEBUBBLES_PORT; do
     if grep -Eq "^[[:space:]]*$key=" .env; then
       ok "$key=configured"
     else

@@ -86,7 +86,7 @@
     {
       "name": "Media & Streaming",
       "slug": "media-and-streaming",
-      "count": 83
+      "count": 82
     },
     {
       "name": "Moltbook",
@@ -141,7 +141,7 @@
     {
       "name": "Speech & Transcription",
       "slug": "speech-and-transcription",
-      "count": 42
+      "count": 41
     },
     {
       "name": "Transportation",
@@ -24492,14 +24492,6 @@
       "registry": "clawskills"
     },
     {
-      "name": "alexa-control",
-      "description": "Control Alexa devices via CLI - set alarms, play music, flash briefings, smart home commands.",
-      "category": "Media & Streaming",
-      "categorySlug": "media-and-streaming",
-      "url": "https://clawskills.sh/skills/ignito-pg-alexa-control",
-      "registry": "clawskills"
-    },
-    {
       "name": "amateur-radio-dx",
       "description": "Monitor DX clusters for rare station spots, track active DX expeditions, and get daily band activity digests.",
       "category": "Media & Streaming",
@@ -32881,14 +32873,6 @@
       "category": "Speech & Transcription",
       "categorySlug": "speech-and-transcription",
       "url": "https://clawskills.sh/skills/liekzejaws-akaunting",
-      "registry": "clawskills"
-    },
-    {
-      "name": "alexa-cli",
-      "description": "Control Amazon Alexa devices and smart home via the `alexacli` CLI.",
-      "category": "Speech & Transcription",
-      "categorySlug": "speech-and-transcription",
-      "url": "https://clawskills.sh/skills/buddyh-alexa-cli",
       "registry": "clawskills"
     },
     {

@@ -27,17 +27,6 @@ describe('buildSilentSuccessFallback', () => {
     expect(reply).not.toContain('runtime failed during startup or execution');
   });
 
-  it('shapes direct fallback more concisely for Alexa ordinary chat', () => {
-    const reply = buildSilentSuccessFallback(
-      'direct_assistant',
-      [{ content: "What's up?" }],
-      'alexa',
-    );
-
-    expect(reply).toBeTruthy();
-    expect(reply).not.toContain('operator');
-  });
-
   it('uses reminder-specific wording for protected reminder requests', () => {
     const reply = buildSilentSuccessFallback('protected_assistant', [
       { content: 'Remind me tomorrow at 3pm to call Sam' },

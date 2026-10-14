@@ -20,7 +20,8 @@ async function main(): Promise<void> {
     id: 'ritual-debug-reminder',
     group_folder: groupFolder,
     chat_jid: chatJid,
-    prompt: 'Send a concise reminder telling the user to confirm the dinner timing.',
+    prompt:
+      'Send a concise reminder telling the user to confirm the dinner timing.',
     script: null,
     schedule_type: 'once',
     schedule_value: '2026-04-05T23:30:00.000Z',
@@ -110,38 +111,16 @@ async function main(): Promise<void> {
     },
   });
 
-  const whyThis = await buildDailyCompanionResponse('why are you bringing that up', {
-    channel: 'telegram',
-    groupFolder,
-    tasks: [],
-    now: new Date('2026-04-05T20:31:00.000Z'),
-    priorContext: looseEnds.dailyResponse?.context || null,
-  });
-
-  const alexaEvening = await executeAssistantCapability({
-    capabilityId: 'daily.evening_reset',
-    context: {
-      channel: 'alexa',
+  const whyThis = await buildDailyCompanionResponse(
+    'why are you bringing that up',
+    {
+      channel: 'telegram',
       groupFolder,
-      now: new Date('2026-04-05T20:32:00.000Z'),
+      tasks: [],
+      now: new Date('2026-04-05T20:31:00.000Z'),
+      priorContext: looseEnds.dailyResponse?.context || null,
     },
-    input: {
-      canonicalText: 'what should I remember tonight',
-    },
-  });
-
-  const alexaCandace = await executeAssistantCapability({
-    capabilityId: 'household.candace_upcoming',
-    context: {
-      channel: 'alexa',
-      groupFolder,
-      now: new Date('2026-04-05T20:33:00.000Z'),
-    },
-    input: {
-      canonicalText: "what's still open with Candace",
-      personName: 'Candace',
-    },
-  });
+  );
 
   const shorter = await executeAssistantCapability({
     capabilityId: 'rituals.configure',
@@ -198,18 +177,6 @@ async function main(): Promise<void> {
   ]);
 
   printBlock('WHY THIS SURFACED', [`reply: ${whyThis?.reply || 'none'}`]);
-
-  printBlock('ALEXA EVENING RESET', [
-    `handled: ${alexaEvening.handled}`,
-    `reply: ${alexaEvening.replyText || 'none'}`,
-    `shape: ${alexaEvening.outputShape || 'none'}`,
-  ]);
-
-  printBlock('ALEXA CANDACE FOLLOW-THROUGH', [
-    `handled: ${alexaCandace.handled}`,
-    `reply: ${alexaCandace.replyText || 'none'}`,
-    `shape: ${alexaCandace.outputShape || 'none'}`,
-  ]);
 
   printBlock('CONTROL TURNS', [
     `shorter: ${shorter.replyText || 'none'}`,

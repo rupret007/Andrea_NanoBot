@@ -274,9 +274,9 @@ describe('helper boundary wiring', () => {
       'const tryHandleSharedAssistantCompletion = async (): Promise<boolean> => {',
     );
     expect(source).toContain(
-      'const followup = resolveAlexaConversationFollowup(lastContent, state);',
+      'const followup = resolveAssistantConversationFollowup(lastContent, state);',
     );
-    expect(source).toContain('completeAssistantActionFromAlexa(');
+    expect(source).toContain('completeAssistantAction(');
     expect(sharedCompletionIndex).toBeGreaterThan(-1);
     expect(directActionLayerIndex).toBeGreaterThan(-1);
     expect(sharedCompletionIndex).toBeLessThan(directActionLayerIndex);

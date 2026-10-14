@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 
+import { getRegisteredChannelNames } from './channels/registry.js';
 import {
   getAllTasks,
   isDatabaseInitialized,
@@ -76,7 +77,7 @@ const STATIC_SUBJECTS: ToolReliabilitySubject[] = [
     ['what should I do next'],
     'low',
     'none',
-    ['telegram', 'alexa'],
+    ['telegram'],
   ),
   subject(
     'route:cognitive_executive.communication_companion',
@@ -94,7 +95,7 @@ const STATIC_SUBJECTS: ToolReliabilitySubject[] = [
     ['save that for later'],
     'low',
     'none',
-    ['telegram', 'alexa', 'bluebubbles'],
+    ['telegram', 'bluebubbles'],
   ),
   subject(
     'route:cognitive_executive.research',
@@ -112,7 +113,7 @@ const STATIC_SUBJECTS: ToolReliabilitySubject[] = [
     ['google calendar'],
     'high',
     'confirmation',
-    ['telegram', 'alexa'],
+    ['telegram'],
   ),
   subject(
     'tool:message_actions',
@@ -130,7 +131,7 @@ const STATIC_SUBJECTS: ToolReliabilitySubject[] = [
     ['reminder', 'follow-up'],
     'medium',
     'none',
-    ['telegram', 'alexa', 'bluebubbles', 'operator', 'internal'],
+    ['telegram', 'bluebubbles', 'operator', 'internal'],
   ),
   subject(
     'tool:work_cockpit',
@@ -157,7 +158,7 @@ const STATIC_SUBJECTS: ToolReliabilitySubject[] = [
     ['calendar'],
     'high',
     'confirmation',
-    ['telegram', 'alexa'],
+    ['telegram'],
   ),
   subject(
     'integration:bluebubbles',
@@ -168,15 +169,7 @@ const STATIC_SUBJECTS: ToolReliabilitySubject[] = [
     'confirmation',
     ['bluebubbles', 'telegram'],
   ),
-  subject(
-    'integration:alexa',
-    'integration',
-    'Alexa integration',
-    ['voice'],
-    'medium',
-    'manual_external',
-    ['alexa'],
-  ),
+
   subject(
     'integration:telegram',
     'integration',
@@ -490,7 +483,9 @@ export function recordVerifiedUsageReliability(params: {
   seedToolReliabilityRegistry();
   const observedAt = params.observedAt || nowIso();
   const knownSubjectIds = new Set(
-    listToolReliabilitySubjects({ limit: 500 }).map((item) => item.subjectId),
+    listCurrentToolReliabilitySubjects({ limit: 500 }).map(
+      (item) => item.subjectId,
+    ),
   );
   const records = [...new Set(params.subjectIds)]
     .filter((subjectId) => knownSubjectIds.has(subjectId))
@@ -574,6 +569,58 @@ export function seedToolReliabilityRegistry(): void {
   for (const item of STATIC_LINKS) upsertToolDependencyLink(item);
 }
 
+function isCurrentReliabilitySubject(item: ToolReliabilitySubject): boolean {
+  // Custom subjects own their lifecycle. Only retire built-in registry entries
+  // when every explicitly recorded channel is no longer supported.
+  if (
+    item.sourceRefsJson !== json(['cognitive_executive', 'integration_doctor'])
+  ) {
+    return true;
+  }
+  let channels: unknown;
+  try {
+    channels = JSON.parse(item.channelsJson);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return true;
+  }
+  if (
+    !Array.isArray(channels) ||
+    channels.length === 0 ||
+    !channels.every((channel): channel is string => typeof channel === 'string')
+  ) {
+    return true;
+  }
+  const supportedChannels = new Set([
+    ...STATIC_SUBJECTS.flatMap(
+      (subjectItem) => JSON.parse(subjectItem.channelsJson) as string[],
+    ),
+    ...getRegisteredChannelNames(),
+  ]);
+  return channels.some((channel) => supportedChannels.has(channel));
+}
+
+export function listCurrentToolReliabilitySubjects(
+  params: Parameters<typeof listToolReliabilitySubjects>[0] = {},
+): ToolReliabilitySubject[] {
+  return listToolReliabilitySubjects(params).filter(
+    isCurrentReliabilitySubject,
+  );
+}
+
+export function listCurrentToolReliabilityRollups(
+  params: Parameters<typeof listToolReliabilityRollups>[0] = {},
+): ToolReliabilityRollup[] {
+  const retiredSubjectIds = new Set(
+    listToolReliabilitySubjects({ limit: 500 })
+      .filter((item) => !isCurrentReliabilitySubject(item))
+      .map((item) => item.subjectId),
+  );
+  return listToolReliabilityRollups(params).filter(
+    (rollup) => !retiredSubjectIds.has(rollup.subjectId),
+  );
+}
+
 function buildRollup(
   subjectId: string,
   observations: ReliabilityObservation[],
@@ -643,7 +690,7 @@ export function rebuildToolReliabilityRollups(
 ): ToolReliabilityRollup[] {
   if (!isDatabaseInitialized()) return [];
   const updatedAt = nowIso(now);
-  const subjects = listToolReliabilitySubjects({ limit: 500 });
+  const subjects = listCurrentToolReliabilitySubjects({ limit: 500 });
   const rollups = subjects.map((subjectItem) => {
     const observations = listReliabilityObservations({
       subjectId: subjectItem.subjectId,
@@ -904,7 +951,7 @@ export function scoreRouteCandidate(params: {
     : `route:${params.routeKey}`;
   const links = listToolDependencyLinks({ subjectId, limit: 20 });
   const rollups = new Map(
-    listToolReliabilityRollups({ limit: 500 }).map((rollup) => [
+    listCurrentToolReliabilityRollups({ limit: 500 }).map((rollup) => [
       rollup.subjectId,
       rollup,
     ]),
@@ -974,8 +1021,8 @@ export function buildToolReliabilityDoctorReport(
     };
   }
   seedToolReliabilityRegistry();
-  const subjects = listToolReliabilitySubjects({ limit: 500 });
-  const storedRollups = listToolReliabilityRollups({ limit: 500 });
+  const subjects = listCurrentToolReliabilitySubjects({ limit: 500 });
+  const storedRollups = listCurrentToolReliabilityRollups({ limit: 500 });
   const rollupBySubject = new Map(
     storedRollups.map((rollup) => [rollup.subjectId, rollup]),
   );
@@ -1018,7 +1065,6 @@ export function buildToolReliabilityDoctorReport(
 }
 
 function degradedSubjectRank(subjectId: string): number {
-  if (subjectId === 'integration:alexa') return 80;
   if (subjectId === 'tool:work_cockpit') return 60;
   if (subjectId.startsWith('provider:')) return 20;
   if (subjectId.startsWith('integration:')) return 10;

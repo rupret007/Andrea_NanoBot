@@ -60,7 +60,6 @@ function playbookForIntegration(id: string): RepairPlaybookId {
   if (normalized.includes('bluebubbles')) return 'bluebubbles_refresh_all';
   if (normalized.includes('telegram'))
     return 'telegram_user_session_auth_check';
-  if (normalized.includes('alexa')) return 'alexa_ingress_probe';
   if (
     normalized.includes('google_calendar') ||
     normalized.includes('calendar')
@@ -126,8 +125,7 @@ function safeToApply(playbookId: RepairPlaybookId): boolean {
     playbookId === 'provider_quota_cooldown_record' ||
     playbookId === 'work_cockpit_reconcile_selection' ||
     playbookId === 'scheduled_action_failure_review' ||
-    playbookId === 'webhook_registration_check' ||
-    playbookId === 'alexa_ingress_probe'
+    playbookId === 'webhook_registration_check'
   );
 }
 
@@ -156,17 +154,6 @@ function playbookSummary(params: {
         validation:
           params.status?.state === 'healthy' ? 'passed' : 'manual_required',
         cooldownMinutes: 15,
-      };
-    case 'alexa_ingress_probe':
-      return {
-        summary: params.dryRun
-          ? `Planned Alexa local/public ingress status probe for ${params.id}.`
-          : `Recorded recovery checklist for Alexa local/public ingress status and signed proof for ${params.id}.`,
-        nextAction:
-          'Use Alexa Developer Console/app for signed live proof; code will not fake an IntentRequest.',
-        status: params.status?.state === 'healthy' ? 'succeeded' : 'planned',
-        validation: 'manual_required',
-        cooldownMinutes: 30,
       };
     case 'google_calendar_auth_check':
       return {

@@ -36,7 +36,7 @@ import type {
 
 export interface MemoryActivationCommandInput {
   groupFolder: string;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   text: string;
   conversationSummary?: string;
   replyText?: string;
@@ -92,7 +92,7 @@ const SETUP_AREAS: Array<{
     id: 'integrations',
     label: 'channels and integrations',
     nextQuestion:
-      'Which channels and tools matter first: Telegram, texts, calendar, reminders, email, Alexa, or something else?',
+      'Which channels and tools matter first: Telegram, texts, calendar, reminders, email, or something else?',
   },
   {
     id: 'privacy',
@@ -345,7 +345,7 @@ export function formatSetupCompletenessStatus(params: {
 
 export function formatRedactedProfilePackExport(params: {
   groupFolder: string;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   now?: Date;
 }): string {
   const pack = exportRedactedOnboardingProfilePack({
@@ -353,9 +353,7 @@ export function formatRedactedProfilePackExport(params: {
     now: params.now,
   });
   const json = JSON.stringify(pack, null, 2);
-  if (params.channel === 'alexa') {
-    return `I prepared a redacted profile pack with ${pack.facts.length} memory summaries and ${pack.lifeThreads.length} life-thread summaries. Use Telegram to inspect the full JSON.`;
-  }
+
   if (params.channel === 'bluebubbles') {
     return `Redacted profile pack: ${pack.facts.length} facts, ${pack.lifeThreads.length} life threads, identifiers removed.`;
   }
@@ -546,7 +544,7 @@ function upsertLearningCandidate(params: {
   groupFolder: string;
   self: ProfileSubject;
   candidate: LearningCandidate;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   nowIso: string;
 }): ProfileFact {
   const existing = getProfileFactByKey(

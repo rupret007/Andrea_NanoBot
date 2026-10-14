@@ -36,12 +36,12 @@ export interface PlannedReminder {
 }
 
 /**
- * A channel message (or Alexa request) is the authority boundary for a
+ * A channel message is the authority boundary for a
  * reminder write.  Supplying its stable identifier makes retries and a
  * process restart converge on the same scheduled_tasks primary key.
  */
 export interface ReminderOperationIdentity {
-  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'internal';
+  channel?: 'telegram' | 'bluebubbles' | 'internal';
   inboundId?: string | null;
   timeZone?: string | null;
 }

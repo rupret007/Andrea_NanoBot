@@ -28,15 +28,16 @@ import { syncOutcomeFromReminderTask } from './outcome-reviews.js';
 import { handleRitualCommand, type RitualCommandResult } from './rituals.js';
 import { buildSignaturePostActionConfirmation } from './signature-flows.js';
 import type {
-  AlexaConversationFollowupAction,
+  AssistantConversationFollowupAction,
   ActionBundleActionType,
   ActionBundleOriginKind,
   CompanionContinuationCandidate,
 } from './types.js';
 
 export interface AssistantActionCompletionParams {
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
-  action: AlexaConversationFollowupAction;
+  action: AssistantConversationFollowupAction;
   utterance: string;
   conversationSummary?: string;
   priorSubjectData?: AssistantCapabilityContext['priorSubjectData'];
@@ -118,7 +119,7 @@ function resolveBundleId(
 }
 
 function resolveBundleActionType(
-  action: AlexaConversationFollowupAction,
+  action: AssistantConversationFollowupAction,
   utterance: string,
 ): ActionBundleActionType | null {
   if (
@@ -289,7 +290,7 @@ function completeEveningCarryover(
   if (threadTitle) {
     const lifeThreadResult = handleLifeThreadCommand({
       groupFolder: params.groupFolder,
-      channel: 'alexa',
+      channel: params.channel,
       text: `track this under ${threadTitle} thread`,
       replyText: completionText,
       conversationSummary: params.conversationSummary,
@@ -298,7 +299,7 @@ function completeEveningCarryover(
     if (lifeThreadResult.handled && lifeThreadResult.referencedThread) {
       const ritualResult = handleRitualCommand({
         groupFolder: params.groupFolder,
-        channel: 'alexa',
+        channel: params.channel,
         text: 'make this part of my evening reset',
         replyText: completionText,
         conversationSummary: params.conversationSummary,
@@ -311,7 +312,7 @@ function completeEveningCarryover(
         return {
           handled: true,
           replyText: buildSignaturePostActionConfirmation({
-            channel: 'alexa',
+            channel: params.channel,
             didWhat:
               ritualResult.responseText ||
               lifeThreadResult.responseText ||
@@ -327,7 +328,7 @@ function completeEveningCarryover(
       return {
         handled: true,
         replyText: buildSignaturePostActionConfirmation({
-          channel: 'alexa',
+          channel: params.channel,
           didWhat: lifeThreadResult.responseText || 'Okay.',
           stillOpen: resolveOpenLoopText(params, candidate, completionText),
           nextSuggestion:
@@ -340,7 +341,7 @@ function completeEveningCarryover(
 
   const savedThread = handleLifeThreadCommand({
     groupFolder: params.groupFolder,
-    channel: 'alexa',
+    channel: params.channel,
     text: "don't let me forget this tonight",
     replyText: completionText,
     conversationSummary: params.conversationSummary,
@@ -350,7 +351,7 @@ function completeEveningCarryover(
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({
-        channel: 'alexa',
+        channel: params.channel,
         didWhat: savedThread.responseText || 'Okay.',
         stillOpen: resolveOpenLoopText(params, candidate, completionText),
         nextSuggestion: 'turn it into a reminder if you want a time anchor',
@@ -436,7 +437,7 @@ async function deliverCandidateToChannel(
     const delivery = await deliverCompanionHandoff(
       {
         groupFolder: params.groupFolder,
-        originChannel: 'alexa',
+        originChannel: params.channel,
         targetChannel,
         capabilityId: rerun.capabilityId || candidate.capabilityId,
         voiceSummary:
@@ -475,7 +476,7 @@ async function deliverCandidateToChannel(
   const delivery = await deliverCompanionHandoff(
     {
       groupFolder: params.groupFolder,
-      originChannel: 'alexa',
+      originChannel: params.channel,
       targetChannel,
       capabilityId: candidate?.capabilityId,
       voiceSummary: candidate?.voiceSummary || summary,
@@ -507,7 +508,7 @@ async function deliverCandidateToChannel(
   };
 }
 
-export async function completeAssistantActionFromAlexa(
+export async function completeAssistantAction(
   params: AssistantActionCompletionParams,
   deps: Partial<CompanionHandoffDeps> = {},
 ): Promise<AssistantActionCompletionResult> {
@@ -535,7 +536,7 @@ export async function completeAssistantActionFromAlexa(
       { kind: 'approve_all' },
       {
         groupFolder: params.groupFolder,
-        channel: 'alexa',
+        channel: params.channel,
         currentTime: params.now,
         resolveTelegramMainChat: deps.resolveTelegramMainChat,
         resolveBlueBubblesCompanionChat: deps.resolveBlueBubblesCompanionChat,
@@ -566,7 +567,7 @@ export async function completeAssistantActionFromAlexa(
         { kind: 'execute_action_type', actionType: bundleActionType },
         {
           groupFolder: params.groupFolder,
-          channel: 'alexa',
+          channel: params.channel,
           currentTime: params.now,
           resolveTelegramMainChat: deps.resolveTelegramMainChat,
           resolveBlueBubblesCompanionChat: deps.resolveBlueBubblesCompanionChat,
@@ -672,7 +673,7 @@ export async function completeAssistantActionFromAlexa(
     const result = await executeAssistantCapability({
       capabilityId: 'knowledge.save_source',
       context: {
-        channel: 'alexa',
+        channel: params.channel,
         groupFolder: params.groupFolder,
         conversationSummary: params.conversationSummary,
         priorSubjectData: params.priorSubjectData,
@@ -693,7 +694,7 @@ export async function completeAssistantActionFromAlexa(
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({
-        channel: 'alexa',
+        channel: params.channel,
         didWhat: result.replyText || 'Okay.',
         stillOpen,
         nextSuggestion: resolveNextSuggestion(params, candidate),
@@ -714,7 +715,7 @@ export async function completeAssistantActionFromAlexa(
     }
     const reminderRule = findMatchingDelegationRule({
       groupFolder: params.groupFolder,
-      channel: 'alexa',
+      channel: params.channel,
       actionType: 'create_reminder',
       originKind: deriveOriginKind(candidate, params.priorSubjectData),
       personName: candidate?.threadTitle || null,
@@ -734,7 +735,7 @@ export async function completeAssistantActionFromAlexa(
         return {
           handled: true,
           replyText:
-            'I remember your usual save-for-later rule, but I cannot route reminders from this Alexa runtime right now.',
+            'I remember your usual save-for-later rule, but I cannot route reminders from this runtime right now.',
         };
       }
       const target = deps.resolveTelegramMainChat(params.groupFolder);
@@ -777,7 +778,7 @@ export async function completeAssistantActionFromAlexa(
         return {
           handled: true,
           replyText: buildSignaturePostActionConfirmation({
-            channel: 'alexa',
+            channel: params.channel,
             didWhat: `${plannedReminder.confirmation} I used your usual save-for-later rule here.`,
             stillOpen: resolveOpenLoopText(params, candidate, completionText),
             nextSuggestion: resolveNextSuggestion(params, candidate),
@@ -788,7 +789,7 @@ export async function completeAssistantActionFromAlexa(
     }
     const threadRule = findMatchingDelegationRule({
       groupFolder: params.groupFolder,
-      channel: 'alexa',
+      channel: params.channel,
       actionType: 'save_to_thread',
       originKind: deriveOriginKind(candidate, params.priorSubjectData),
       personName: candidate?.threadTitle || null,
@@ -809,7 +810,7 @@ export async function completeAssistantActionFromAlexa(
         null;
       const result = handleLifeThreadCommand({
         groupFolder: params.groupFolder,
-        channel: 'alexa',
+        channel: params.channel,
         text: delegatedThreadTitle
           ? `track this under ${delegatedThreadTitle} thread`
           : 'save this for later',
@@ -827,7 +828,7 @@ export async function completeAssistantActionFromAlexa(
       return {
         handled: true,
         replyText: buildSignaturePostActionConfirmation({
-          channel: 'alexa',
+          channel: params.channel,
           didWhat: `${result.responseText || 'Okay.'} I used your usual save-for-later rule here.`,
           stillOpen: resolveOpenLoopText(params, candidate, completionText),
           nextSuggestion: resolveNextSuggestion(params, candidate),
@@ -850,7 +851,7 @@ export async function completeAssistantActionFromAlexa(
     }
     const threadRule = findMatchingDelegationRule({
       groupFolder: params.groupFolder,
-      channel: 'alexa',
+      channel: params.channel,
       actionType: 'save_to_thread',
       originKind: deriveOriginKind(candidate, params.priorSubjectData),
       personName: candidate?.threadTitle || null,
@@ -868,7 +869,7 @@ export async function completeAssistantActionFromAlexa(
       : 'save this for later';
     const result = handleLifeThreadCommand({
       groupFolder: params.groupFolder,
-      channel: 'alexa',
+      channel: params.channel,
       text,
       replyText: completionText,
       conversationSummary: params.conversationSummary,
@@ -889,7 +890,7 @@ export async function completeAssistantActionFromAlexa(
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({
-        channel: 'alexa',
+        channel: params.channel,
         didWhat:
           threadRule.rule &&
           !extractTrackThreadTitle(params.utterance, candidate)
@@ -929,7 +930,7 @@ export async function completeAssistantActionFromAlexa(
     }
     const reminderRule = findMatchingDelegationRule({
       groupFolder: params.groupFolder,
-      channel: 'alexa',
+      channel: params.channel,
       actionType: 'create_reminder',
       originKind: deriveOriginKind(candidate, params.priorSubjectData),
       personName: candidate?.threadTitle || null,
@@ -952,8 +953,7 @@ export async function completeAssistantActionFromAlexa(
     if (!deps.resolveTelegramMainChat) {
       return {
         handled: true,
-        replyText:
-          'I cannot route reminders from this Alexa runtime right now.',
+        replyText: 'I cannot route reminders from this runtime right now.',
       };
     }
     const target = deps.resolveTelegramMainChat(params.groupFolder);
@@ -1006,7 +1006,7 @@ export async function completeAssistantActionFromAlexa(
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({
-        channel: 'alexa',
+        channel: params.channel,
         didWhat:
           reminderRule.rule && !extractReminderTiming(params.utterance)
             ? `${plannedReminder.confirmation} I used your usual reminder rule here.`
@@ -1020,7 +1020,7 @@ export async function completeAssistantActionFromAlexa(
 
   const ritualResult = handleRitualCommand({
     groupFolder: params.groupFolder,
-    channel: 'alexa',
+    channel: params.channel,
     text: params.utterance,
     replyText: completionText || params.replyText,
     conversationSummary: params.conversationSummary,
@@ -1030,7 +1030,7 @@ export async function completeAssistantActionFromAlexa(
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({
-        channel: 'alexa',
+        channel: params.channel,
         didWhat: ritualResult.responseText || 'Okay.',
         stillOpen: resolveOpenLoopText(
           params,

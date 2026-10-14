@@ -391,7 +391,7 @@ describe('debug log tails', () => {
     expect(status).toContain('Work cockpit proof:');
   });
 
-  it('shows serving commit drift and missing Alexa live proof in debug status', () => {
+  it('shows serving commit drift in debug status', () => {
     writeRuntimeAuditState({
       updatedAt: '2026-04-07T12:00:00.000Z',
       activeRepoRoot: tempDir,
@@ -422,10 +422,6 @@ describe('debug log tails', () => {
     expect(status).toContain('Serving artifact verified: unknown');
     expect(status).toContain('Workspace dirty paths: unknown');
     expect(status).toContain('Serving commit aligned: no');
-    expect(status).toContain('Alexa last signed request: none');
-    expect(status).toContain('Alexa proof kind: none');
-    expect(status).toContain('Alexa proof freshness: none');
-    expect(status).toContain('Alexa confirm command: npm run services:status');
   });
 
   it('surfaces pilot issue counts and journey truth in debug status', () => {

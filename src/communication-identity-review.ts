@@ -484,7 +484,7 @@ export function formatNextCommunicationIdentityReview(
 
 function buildReviewContinuation(params: {
   groupFolder: string;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
 }): Pick<CommunicationIdentityReviewResponse, 'snapshot' | 'inlineActionRows'> {
   const snapshot = buildCommunicationIdentityReviewSnapshot({
     groupFolder: params.groupFolder,
@@ -542,21 +542,14 @@ export function formatCommunicationIdentityReviewSnapshot(
 
 export function handleCommunicationIdentityReview(params: {
   groupFolder: string;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   chatJid?: string | null;
   text: string;
   now?: Date;
 }): CommunicationIdentityReviewResponse {
   const command = parseCommunicationIdentityReviewCommand(params.text);
   if (!command) return { handled: false, changed: false, replyText: '' };
-  if (params.channel === 'alexa') {
-    return {
-      handled: true,
-      changed: false,
-      replyText:
-        'Identity review is available in Telegram or your configured Messages self-thread, where the exact names can be reviewed safely.',
-    };
-  }
+
   if (
     params.channel === 'bluebubbles' &&
     !isConfiguredBlueBubblesSelfThreadAliasJid(params.chatJid)
