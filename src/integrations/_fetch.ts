@@ -45,18 +45,29 @@ export async function fetchWithTimeout(
   }
 
   const ac = new AbortController();
+  let timedOut = false;
   const timer = setTimeout(() => {
+    timedOut = true;
     ac.abort(new Error(`Integration fetch timeout after ${timeoutMs}ms`));
   }, timeoutMs);
 
+  const merged = init.signal ? mergeSignals(ac.signal, init.signal) : null;
   try {
-    const signal = init.signal
-      ? mergeSignals(ac.signal, init.signal)
-      : ac.signal;
-    return await fetchImpl(url, { ...init, signal });
+    const signal = merged ? merged.signal : ac.signal;
+    const res = await fetchImpl(url, { ...init, signal });
+    // Keep the deadline active through body consumption: buffer the body
+    // inside the timeout window so a stalled body cannot hang the caller.
+    if (res.body === null) return res;
+    const body = await res.arrayBuffer();
+    return new Response(body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
   } catch (err) {
-    const e = err as Error;
-    if (e?.name === 'AbortError' || /timeout/i.test(e?.message ?? '')) {
+    // Only an abort caused by our own timer is reported as a timeout;
+    // caller cancellation and other errors propagate unchanged.
+    if (timedOut) {
       throw new Error(`Integration request timed out after ${timeoutMs}ms`, {
         cause: err,
       });
@@ -64,21 +75,30 @@ export async function fetchWithTimeout(
     throw err;
   } finally {
     clearTimeout(timer);
+    merged?.cleanup();
   }
 }
 
 /**
  * Merge two AbortSignals into one. If either aborts, the merged signal aborts.
+ * `cleanup` removes the listeners so long-lived caller signals do not leak.
  */
-function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
-  if (a.aborted) return a;
-  if (b.aborted) return b;
+function mergeSignals(
+  a: AbortSignal,
+  b: AbortSignal,
+): { signal: AbortSignal; cleanup: () => void } {
+  if (a.aborted) return { signal: a, cleanup: () => {} };
+  if (b.aborted) return { signal: b, cleanup: () => {} };
   const ac = new AbortController();
-  const onAbortA = () =>
-    ac.abort((a as AbortSignal & { reason?: unknown }).reason);
-  const onAbortB = () =>
-    ac.abort((b as AbortSignal & { reason?: unknown }).reason);
+  const onAbortA = () => ac.abort(a.reason);
+  const onAbortB = () => ac.abort(b.reason);
   a.addEventListener('abort', onAbortA, { once: true });
   b.addEventListener('abort', onAbortB, { once: true });
-  return ac.signal;
+  return {
+    signal: ac.signal,
+    cleanup: () => {
+      a.removeEventListener('abort', onAbortA);
+      b.removeEventListener('abort', onAbortB);
+    },
+  };
 }

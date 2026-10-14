@@ -106,7 +106,78 @@ describe('fetchWithTimeout', () => {
         { signal: callerAc.signal },
         { fetchImpl: stubFetch, timeoutMs: 10000 },
       ),
+    ).rejects.toThrow('caller aborted');
+  });
+
+  it('does not report caller cancellation as a timeout', async () => {
+    const callerAc = new AbortController();
+    callerAc.abort();
+    const stubFetch: typeof fetch = ((_url: unknown, init: unknown) => {
+      const err = new Error('caller aborted') as Error & { name: string };
+      err.name = 'AbortError';
+      return (init as RequestInit).signal?.aborted
+        ? Promise.reject(err)
+        : Promise.resolve(new Response('ok'));
+    }) as typeof fetch;
+    const p = fetchWithTimeout(
+      'https://example.com',
+      { signal: callerAc.signal },
+      { fetchImpl: stubFetch, timeoutMs: 10000 },
+    );
+    await expect(p).rejects.toThrow('caller aborted');
+    await expect(p).rejects.not.toThrow(/timed out/i);
+  });
+
+  it('keeps the deadline active while the response body stalls', async () => {
+    const stubFetch: typeof fetch = ((_url: unknown, init: unknown) => {
+      const sig = (init as RequestInit).signal as AbortSignal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"partial":'));
+          sig.addEventListener('abort', () => controller.error(sig.reason));
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    }) as typeof fetch;
+    await expect(
+      fetchWithTimeout(
+        'https://example.com',
+        {},
+        { fetchImpl: stubFetch, timeoutMs: 20 },
+      ),
     ).rejects.toThrow(/timed out/i);
+  });
+
+  it('removes its listeners from a long-lived caller signal', async () => {
+    const callerAc = new AbortController();
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const sig = callerAc.signal;
+    const origAdd = sig.addEventListener.bind(sig);
+    const origRemove = sig.removeEventListener.bind(sig);
+    sig.addEventListener = ((
+      ...args: Parameters<AbortSignal['addEventListener']>
+    ) => {
+      added.push(args[1]);
+      return origAdd(...args);
+    }) as typeof sig.addEventListener;
+    sig.removeEventListener = ((
+      ...args: Parameters<AbortSignal['removeEventListener']>
+    ) => {
+      removed.push(args[1]);
+      return origRemove(...args);
+    }) as typeof sig.removeEventListener;
+    const stubFetch: typeof fetch = (async () =>
+      new Response('ok')) as typeof fetch;
+    for (let i = 0; i < 3; i += 1) {
+      await fetchWithTimeout(
+        'https://example.com',
+        { signal: sig },
+        { fetchImpl: stubFetch },
+      );
+    }
+    expect(added).toHaveLength(3);
+    expect(removed).toEqual(added);
   });
 
   it('throws if no fetch implementation available', async () => {
