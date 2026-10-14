@@ -161,7 +161,6 @@ The Alexa router and matcher live in:
 
 - [src/assistant-capability-router.ts](../src/assistant-capability-router.ts)
 - [src/alexa-dialogue.ts](../src/alexa-dialogue.ts)
-- [src/alexa.ts](../src/alexa.ts)
 
 ## Telegram And Alexa Shared Actions
 
@@ -479,7 +478,6 @@ Focused test files for the shared core:
 Useful pinned-Node debug commands:
 
 - `npm run debug:daily-companion`
-- `npm run debug:alexa-conversation`
 - `npm run debug:shared-capabilities` (isolated and network-denied) or
   `npm run debug:shared-capabilities -- --live` (intentional provider-backed use)
 - `npm run debug:research-mode` (read-only status) or

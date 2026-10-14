@@ -412,11 +412,11 @@ draft, so the subsequent confirmed write retains retry reconciliation.
 Changed implementation and proof:
 
 - `src/alexa.ts`
-- `src/alexa.test.ts`
+- (Alexa voice endpoint removed 2026-10-14)
 
 ## Executed verification
 
-- Focused: `src/alexa.test.ts`, `src/google-calendar-create.test.ts`,
+- Focused: `src/google-calendar-create.test.ts`,
   `src/calendar-research-coordinator.test.ts`, and
   `src/calendar-research-sequencing.test.ts`: 4 files / 183 tests passed.
 - Full root suite: 229 files / 2,712 tests passed.
@@ -469,7 +469,6 @@ Operator commands for the remaining proof:
 ```bash
 npm run services:status
 npm run integrations:status -- --json
-npm run debug:alexa-conversation -- --review
 ```
 
 For Alexa, use the real device or authenticated simulator. For Telegram or
