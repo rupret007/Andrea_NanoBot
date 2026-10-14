@@ -47,19 +47,6 @@ const proofReport: LiveProofGauntletReport = {
       privacyJson: '{}',
     },
     {
-      proofId: 'proof:alexa_signed_intentrequest',
-      proofName: 'Alexa signed IntentRequest proof',
-      status: 'externally_blocked',
-      lastProofAt: 'none',
-      nextStep:
-        'Use a real device or authenticated Alexa Developer Console simulator.',
-      repoWorkRequired: false,
-      blockerOwner: 'external',
-      evidenceIdsJson: JSON.stringify(['proof:alexa']),
-      detail: 'Manual live proof needed.',
-      privacyJson: '{}',
-    },
-    {
       proofId: 'proof:bluebubbles_same_thread',
       proofName: 'BlueBubbles same-thread message-action proof',
       status: 'near_live_only',
@@ -110,10 +97,10 @@ const proofReport: LiveProofGauntletReport = {
     },
   ],
   liveProvenCount: 3,
-  proofDebtCount: 4,
+  proofDebtCount: 3,
   dailyCoreLiveProvenCount: 3,
   dailyCoreProofDebtCount: 3,
-  optionalProofDebtCount: 1,
+  optionalProofDebtCount: 0,
   repoWorkRequiredCount: 0,
   nextAction:
     'Telegram user-session proof: Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH, then run npm run telegram:user:smoke.',
@@ -136,10 +123,10 @@ const realityReport = {
     recommendedProbeIdsJson: '[]',
     trueNowSummary:
       'Google Calendar, Research/provider, Image generation, and provider:brave_search are healthy.',
-    staleSummary: '4 proof item(s) need closure; repo work required=0.',
+    staleSummary: '3 proof item(s) need closure; repo work required=0.',
     contradictionSummary: 'No open contradictions detected.',
-    missingProofSummary: 'proof debt=4',
-    degradedToolsSummary: 'integration:alexa externally blocked',
+    missingProofSummary: 'proof debt=3',
+    degradedToolsSummary: 'none',
     confidenceSummary: 'medium-low confidence because proof debt remains.',
     nextAction: proofReport.nextAction,
     privacyJson: '{}',
@@ -232,7 +219,6 @@ assert.equal(report.scenarioCount, 10);
 assert.equal(report.scenarios.length, 10);
 assert.equal(report.consistency.braveSearchHealthy, true);
 assert.equal(report.consistency.telegramUserSessionMissingConfig, true);
-assert.equal(report.consistency.alexaSignedProofPending, true);
 assert.equal(
   report.consistency.blueBubblesTransportReadyButSameThreadProofIncomplete,
   true,

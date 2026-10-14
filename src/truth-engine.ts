@@ -228,11 +228,7 @@ function classifyClaimKind(text: string): TruthClaimKind {
   ) {
     return 'provider_participation';
   }
-  if (
-    /\b(bluebubbles|alexa|telegram|proof|live[_ -]?proven|webhook)\b/.test(
-      lower,
-    )
-  ) {
+  if (/\b(bluebubbles|telegram|proof|live[_ -]?proven|webhook)\b/.test(lower)) {
     return 'integration_proof';
   }
   if (/\b(remember|memory|profile|preference|learned)\b/.test(lower)) {

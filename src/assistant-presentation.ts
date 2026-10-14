@@ -1,7 +1,6 @@
 export type AssistantPresentationChannel =
   | 'telegram'
   | 'bluebubbles'
-  | 'alexa'
   | 'cockpit';
 
 export type AssistantPresentationState =
@@ -53,12 +52,6 @@ export function renderAssistantPresentation(
   const lead = clean(presentation.lead);
   const facts = boundedFacts(presentation);
   const next = presentation.nextAction ? clean(presentation.nextAction) : null;
-
-  if (channel === 'alexa') {
-    return [lead, facts[0], next ? `Next, ${next}` : null]
-      .filter(Boolean)
-      .join(' ');
-  }
 
   if (channel === 'bluebubbles') {
     return [lead, ...facts, next ? `Next: ${next}` : null]

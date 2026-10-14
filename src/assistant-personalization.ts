@@ -13,30 +13,27 @@ import {
 } from './db.js';
 import { escapeXml } from './router.js';
 import {
-  type AlexaCompanionGuidanceGoal,
-  type AlexaConversationFollowupAction,
-  type AlexaConversationSubjectKind,
+  type AssistantCompanionGuidanceGoal,
+  type AssistantConversationFollowupAction,
+  type AssistantConversationSubjectKind,
   type ProfileFact,
   type ProfileFactWithSubject,
   type ProfileSubject,
 } from './types.js';
 
-export type AssistantExpressionChannel = 'alexa' | 'telegram' | 'bluebubbles';
-export type AssistantChannelMode =
-  | 'alexa_companion'
-  | 'telegram_default'
-  | 'bluebubbles_default';
+export type AssistantExpressionChannel = 'telegram' | 'bluebubbles';
+export type AssistantChannelMode = 'telegram_default' | 'bluebubbles_default';
 export type AssistantInitiativeLevel = 'measured' | 'restrained' | 'coach_like';
 
 export interface AssistantPromptContextOptions {
   channel: AssistantExpressionChannel;
   groupFolder: string;
   channelMode?: AssistantChannelMode;
-  guidanceGoal?: AlexaCompanionGuidanceGoal;
+  guidanceGoal?: AssistantCompanionGuidanceGoal;
   initiativeLevel?: AssistantInitiativeLevel;
   conversationSummary?: string;
-  conversationSubjectKind?: AlexaConversationSubjectKind;
-  supportedFollowups?: AlexaConversationFollowupAction[];
+  conversationSubjectKind?: AssistantConversationSubjectKind;
+  supportedFollowups?: AssistantConversationFollowupAction[];
 }
 
 export interface PersonalizationCommandInput {
@@ -272,23 +269,15 @@ function describeFact(fact: ProfileFactWithSubject): string {
 }
 
 function summarizeFactsForChannel(
-  channel: AssistantExpressionChannel,
+  _channel: AssistantExpressionChannel,
   facts: ProfileFactWithSubject[],
   subjectLabel: string,
 ): string {
   if (facts.length === 0) {
-    return channel === 'alexa'
-      ? `I am not actively using any remembered details about ${subjectLabel} yet.`
-      : `I am not actively using any remembered details about ${subjectLabel} yet.`;
+    return `I am not actively using any remembered details about ${subjectLabel} yet.`;
   }
 
   const descriptions = facts.map(describeFact);
-  if (channel === 'alexa') {
-    if (descriptions.length === 1) {
-      return `Right now I remember that ${descriptions[0]}.`;
-    }
-    return `Right now I remember that ${descriptions[0]}, and ${descriptions[1]}.`;
-  }
 
   return [
     `Remembered details for ${subjectLabel}:`,
@@ -344,7 +333,7 @@ function buildAcceptedProfileLines(groupFolder: string): string[] {
       const mode = typeof value.mode === 'string' ? value.mode : 'balanced';
       lines.push(
         mode === 'fuller'
-          ? 'Give a little more explanation when it helps, while staying concise on Alexa.'
+          ? 'Give a little more explanation when it helps, while staying concise.'
           : 'Keep explanation lean unless extra detail is clearly needed.',
       );
       continue;
@@ -401,134 +390,14 @@ function buildAcceptedProfileLines(groupFolder: string): string[] {
 
 function buildChannelExpressionLines(
   channel: AssistantExpressionChannel,
-  channelMode?: AssistantChannelMode,
+  _channelMode?: AssistantChannelMode,
 ): string[] {
-  if (channel === 'alexa') {
-    if (channelMode === 'alexa_companion') {
-      return [
-        'Channel: Alexa Companion Mode.',
-        'Sound natural, warm, concise, and lightly personable aloud.',
-        'Use one strong lead sentence and at most two short supporting sentences.',
-        'Lead with the main thing that matters most, then one or two useful follow-through details.',
-        'Avoid sounding like a command menu, an intent router, or a status panel.',
-        'Use soft prioritization language like main thing, one thing to keep in mind, or nothing urgent when it fits.',
-        'If the day is light, say that plainly instead of stretching for urgency.',
-        'Let short follow-ups feel like the same conversation instead of a reset.',
-        'A subtle touch of warmth or wit is okay when the moment is low stakes.',
-        'Ask only one short clarification when needed.',
-      ];
-    }
-    return [
-      'Channel: Alexa.',
-      'Sound natural, warm, concise, and lightly personable aloud.',
-      'Use one strong lead sentence and at most two short supporting sentences.',
-      'Prefer brief transitions over robotic framing.',
-      'Avoid sounding like a menu or status panel.',
-      'Ask only one short clarification when needed.',
-    ];
-  }
-
   return [
     channel === 'bluebubbles' ? 'Channel: BlueBubbles.' : 'Channel: Telegram.',
     'Keep the tone human and helpful.',
-    'You can be slightly richer and more actionable than Alexa.',
+    'Give useful detail and actionable next steps.',
     'Stay concise unless the user clearly wants more detail.',
   ];
-}
-
-function buildGuidanceLines(options: AssistantPromptContextOptions): string[] {
-  if (options.channel !== 'alexa') return [];
-
-  const lines: string[] = [];
-  if (options.initiativeLevel === 'measured') {
-    lines.push(
-      'When the user asks an open-ended question, give one measured recommendation and at most two supporting considerations.',
-    );
-  }
-
-  switch (options.guidanceGoal) {
-    case 'daily_brief':
-      lines.push(
-        'Rank what matters by urgency, obligations to other people, meeting prep, family impact, and breathing room.',
-      );
-      lines.push(
-        'Do not sound like a schedule dump; sound like a real assistant helping someone get their bearings.',
-      );
-      break;
-    case 'upcoming_soon':
-      lines.push(
-        'Summarize the next few meaningful things and what the user should keep in mind around them.',
-      );
-      break;
-    case 'next_action':
-      lines.push(
-        'Prioritize the most useful next move, not just the next event on the calendar.',
-      );
-      break;
-    case 'meeting_prep':
-      lines.push(
-        'Focus on what to handle before the next meeting and any reminder-worthy prep.',
-      );
-      break;
-    case 'tomorrow_brief':
-      lines.push(
-        'Lead with how busy tomorrow feels, then the main thing to keep in mind.',
-      );
-      break;
-    case 'what_matters_most':
-      lines.push(
-        'Answer with the single highest-priority thing first, then only the most relevant supporting detail.',
-      );
-      break;
-    case 'anything_important':
-    case 'risk_check':
-      lines.push(
-        'Surface only the main thing to watch for, and if nothing seems urgent, say that clearly without filler.',
-      );
-      break;
-    case 'open_conversation':
-      lines.push(
-        'Treat this as an in-progress Alexa conversation. Use earlier context when it helps, but answer the actual request in front of you.',
-      );
-      lines.push(
-        'If the user sounds open-ended, be helpful and grounded instead of falling back to menu-like phrasing.',
-      );
-      break;
-    case 'what_am_i_forgetting':
-      lines.push(
-        'Look for loose ends, prep gaps, carryover reminders, and relationship-sensitive follow-through.',
-      );
-      break;
-    case 'evening_reset':
-      lines.push(
-        'Focus on what to wrap up today, what to remember tonight, and what to tee up for tomorrow.',
-      );
-      break;
-    case 'family_guidance':
-      lines.push(
-        'Use family or household context naturally, but only when it is clearly relevant to the question.',
-      );
-      break;
-    case 'shared_plans':
-      lines.push(
-        'Prioritize shared plans, family logistics, and what the user may need to talk through with the other person.',
-      );
-      break;
-    case 'action_follow_through':
-      lines.push(
-        'If an obvious reminder, save-for-later, or follow-up draft would help, mention it briefly and practically.',
-      );
-      break;
-    case 'explainability':
-      lines.push(
-        'Explain the high-level reasons briefly in user language without exposing internal prompt mechanics.',
-      );
-      break;
-    default:
-      break;
-  }
-
-  return lines;
 }
 
 export function buildAssistantPromptWithPersonalization(
@@ -540,29 +409,18 @@ export function buildAssistantPromptWithPersonalization(
     options.channel,
     options.channelMode,
   );
-  const guidanceLines = buildGuidanceLines(options);
   const sections: string[] = [];
 
   sections.push(
     `<assistant_channel channel="${escapeXml(options.channel)}" mode="${escapeXml(
       options.channelMode ||
-        (options.channel === 'alexa'
-          ? 'alexa_companion'
-          : options.channel === 'bluebubbles'
-            ? 'bluebubbles_default'
-            : 'telegram_default'),
+        (options.channel === 'bluebubbles'
+          ? 'bluebubbles_default'
+          : 'telegram_default'),
     )}">\n${channelLines
       .map((line) => `<rule>${escapeXml(line)}</rule>`)
       .join('\n')}\n</assistant_channel>`,
   );
-
-  if (guidanceLines.length > 0) {
-    sections.push(
-      `<assistant_guidance goal="${escapeXml(options.guidanceGoal || 'daily_brief')}" initiative_level="${escapeXml(options.initiativeLevel || 'measured')}">\n${guidanceLines
-        .map((line) => `<rule>${escapeXml(line)}</rule>`)
-        .join('\n')}\n</assistant_guidance>`,
-    );
-  }
 
   if (acceptedProfileLines.length > 0) {
     sections.push(
@@ -629,7 +487,7 @@ function listAcceptedPreferenceDescriptions(groupFolder: string): string[] {
 }
 
 function buildPersonalizationExplanation(
-  channel: AssistantExpressionChannel,
+  _channel: AssistantExpressionChannel,
   groupFolder: string,
   conversationSummary?: string,
 ): string {
@@ -637,13 +495,6 @@ function buildPersonalizationExplanation(
   const contextLead = conversationSummary?.trim()
     ? 'I was mostly using your current schedule, reminders, and what we were just talking about.'
     : 'I am mostly using your current schedule, reminders, and the request you just asked about.';
-
-  if (channel === 'alexa') {
-    if (descriptions.length === 0) {
-      return contextLead;
-    }
-    return `${contextLead} I am also using the preferences you have approved, like ${joinNaturalLanguage(descriptions)}.`;
-  }
 
   const lines = [contextLead];
   if (descriptions.length > 0) {
@@ -1170,10 +1021,7 @@ export function handlePersonalizationCommand(
     });
     return {
       handled: true,
-      responseText:
-        input.channel === 'alexa'
-          ? 'Okay. I will remember that.'
-          : `Okay. I will remember: ${summary}`,
+      responseText: `Okay. I will remember: ${summary}`,
       referencedFactId: fact.id,
     };
   }

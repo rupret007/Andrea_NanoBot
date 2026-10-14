@@ -146,18 +146,6 @@ async function main(): Promise<void> {
     },
   });
 
-  const alexaSummary = await executeAssistantCapability({
-    capabilityId: 'knowledge.summarize_saved',
-    context: {
-      channel: 'alexa',
-      groupFolder,
-      now,
-    },
-    input: {
-      canonicalText: 'What do I already know about Candace dinner timing?',
-    },
-  });
-
   printBlock('KNOWLEDGE SAVE', [
     ...formatDebugExecutionPolicy({
       command: 'debug:knowledge-library',
@@ -201,12 +189,6 @@ async function main(): Promise<void> {
     `handled: ${telegramExplain.handled}`,
     `reply: ${telegramExplain.replyText || 'none'}`,
     `trace: ${telegramExplain.trace?.responseSource || 'none'}`,
-  ]);
-
-  printBlock('ALEXA SOURCE SUMMARY', [
-    `handled: ${alexaSummary.handled}`,
-    `reply: ${alexaSummary.replyText || 'none'}`,
-    `handoff: ${alexaSummary.handoffOffer || 'none'}`,
   ]);
 }
 

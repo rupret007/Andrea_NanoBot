@@ -15,7 +15,6 @@ This repo has three different validation layers:
 - **Optional integration validation**
   - Cursor Cloud
   - desktop bridge
-  - Alexa
   - Amazon
   - marketplace/community skills
 
@@ -139,7 +138,7 @@ proof. Repository validation supports Node `22.x` (`>=22 <23`) and is pinned by
 dependencies, including the bundled ffmpeg helpers used for media analysis.
 The TypeScript build itself remains shared across macOS and Windows.
 
-For the shared assistant core specifically, add these focused checks when Alexa, Telegram, or research orchestration changes:
+For the shared assistant core specifically, add these focused checks when Telegram, or research orchestration changes:
 
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts
@@ -156,11 +155,11 @@ either command only for intentional provider-backed use.
 For ordinary companion chat, graceful degraded replies, and no-leakage checks, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/conversational-core.test.ts src/direct-quick-reply.test.ts src/assistant-routing.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts src/user-facing-fallback.test.ts src/alexa.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/conversational-core.test.ts src/direct-quick-reply.test.ts src/assistant-routing.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts src/user-facing-fallback.test.ts
 npm run debug:conversational-core
 ```
 
-Treat this conversational-core stack as the fast proof that normal Telegram, Alexa, and BlueBubbles users still get warm ordinary chat plus humane blocked-path behavior instead of operator diagnostics.
+Treat this conversational-core stack as the fast proof that normal Telegram and BlueBubbles users still get warm ordinary chat plus humane blocked-path behavior instead of operator diagnostics.
 
 For the flagship end-to-end product journeys, add:
 
@@ -169,7 +168,7 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/s
 npm run debug:signature-flows
 ```
 
-This is the fastest proof that the best Alexa, Telegram, BlueBubbles, communication, mission, and research journeys still feel coherent end to end.
+This is the fastest proof that the best Telegram, BlueBubbles, communication, mission, and research journeys still feel coherent end to end.
 Treat this flagship-flow suite and harness as the primary product proof. The narrower subsystem suites below are there to debug seams after the flagship proof tells you which journey regressed.
 
 For pilot-mode instrumentation, flagship journey proof, and private issue-capture changes, add:
@@ -189,7 +188,7 @@ Treat `debug:pilot` as the operator view for:
 For cross-channel handoff and action-completion changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/alexa.test.ts src/assistant-capability-router.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts src/assistant-capability-router.test.ts
 npm run debug:cross-channel-handoffs
 ```
 
@@ -451,7 +450,7 @@ See
 For personalized setup, groceries, errands, bills, meals, pills, and lightweight list management changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/everyday-capture.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/daily-companion.test.ts src/command-surface-registry.test.ts src/alexa-v1.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/everyday-capture.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/daily-companion.test.ts src/command-surface-registry.test.ts
 npm run telegram:user:smoke
 ```
 
@@ -469,7 +468,7 @@ Treat that capture/profile suite as the fast proof that Andrea can:
 For communication-companion and relationship-follow-through changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/communication-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/alexa-conversation.test.ts src/daily-companion.test.ts src/channels/bluebubbles.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/communication-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/daily-companion.test.ts src/channels/bluebubbles.test.ts
 npm run debug:communication-companion
 ```
 
@@ -491,7 +490,7 @@ npm run debug:missions
 For follow-through review and approval-flow changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/assistant-capabilities.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/assistant-capabilities.test.ts
 npm run telegram:user:smoke
 ```
 
@@ -501,12 +500,12 @@ Treat that review suite as the fast proof that Andrea can:
 - approve all or a subset
 - execute through existing reminder/draft/thread/library/handoff systems
 - report partial success or failure calmly
-- keep Alexa and Telegram follow-up semantics aligned
+- keep Telegram and BlueBubbles follow-up semantics aligned
 
 For delegation-rule and safe-automation changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa.test.ts src/outcome-reviews.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/outcome-reviews.test.ts
 npm run telegram:user:smoke
 ```
 
@@ -642,7 +641,7 @@ threshold, does not claim to cap provider billing, and remains outside CI.
 For messaging trust-ladder and live-delivery changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/channel-delivery.test.ts src/channels/telegram.test.ts src/interaction-delivery-metrics.test.ts src/in-flight-turn-cursors.test.ts src/group-queue.test.ts src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/alexa.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts src/job-status-card.test.ts src/job-dispatch.test.ts src/runtime-card-delivery.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/channel-delivery.test.ts src/channels/telegram.test.ts src/interaction-delivery-metrics.test.ts src/in-flight-turn-cursors.test.ts src/group-queue.test.ts src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts src/job-status-card.test.ts src/job-dispatch.test.ts src/runtime-card-delivery.test.ts
 npm run telegram:user:smoke
 npm run debug:bluebubbles -- --live
 ```
@@ -694,7 +693,7 @@ Treat that calendar stack as the fast proof that Andrea can:
 For outcome tracking, carryover, and review-flow changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/alexa.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/missions.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/missions.test.ts
 npm run telegram:user:smoke
 ```
 
@@ -703,7 +702,6 @@ Treat that review suite as the fast proof that Andrea can:
 - record execution as `completed`, `partial`, or `deferred` honestly
 - surface unresolved loops in daily and weekly review
 - carry work into tomorrow without pretending it is closed
-- keep Alexa review orientation short and grounded
 - keep Telegram review controls bounded and inspectable
 
 For Cognitive Executive route-selection, world-snapshot, and everyday executive-loop changes, add:
@@ -776,7 +774,6 @@ It includes:
 Implementation note:
 
 - `.nvmrc` pins the repository and CI runtime to Node 22.22.2. On Windows, `scripts/run-with-pinned-node.mjs` provisions and validates that exact runtime; on macOS and Linux it uses the active Node process, which must satisfy the supported Node 22.x contract
-- if the host default `node` is not 22, do not use that runtime for DB-backed Alexa checks; unsupported runtimes can fail `better-sqlite3` with ABI mismatch errors that are not Alexa feature failures
 
 `test:major` includes `setup -- --step verify`, which is intentionally live: it
 may make a real, potentially billable model reachability request and start
@@ -908,11 +905,9 @@ Confirm:
 Important truth for this host:
 
 - `setup -- --step verify` now follows **pass core, warn extras**
-- on the current host, `STATUS: success` is the normal outcome when launch readiness is `core_ready`, `core_ready_with_manual_surface_sync`, or `provider_blocked_but_core_usable`
-- use `LAUNCH_CANDIDATE_STATUS`, `CORE_STATUS`, `MANUAL_SYNC_STEPS`, `OPTIONAL_PROVIDER_BLOCKERS`, `OPTIONAL_PROVIDER_NEXT_ACTIONS`, and `PROOF_FRESHNESS_GAPS` as the primary operator truth
+- on the current host, `STATUS: success` is the normal outcome when launch readiness is `core_ready` or `provider_blocked_but_core_usable`
+- use `LAUNCH_CANDIDATE_STATUS`, `CORE_STATUS`, `OPTIONAL_PROVIDER_BLOCKERS`, `OPTIONAL_PROVIDER_NEXT_ACTIONS`, and `PROOF_FRESHNESS_GAPS` as the primary operator truth
 - keep `EXTERNAL_BLOCKERS` and `MISSING_REQUIREMENTS` only as compatibility aliases, not as the whole product story
-- Alexa can be `live_proven` while the latest repo interaction-model hash still needs one local sync confirmation; that should read as `core_ready_with_manual_surface_sync`, not `near_live_only`
-- if Alexa ages out later, the likely blocker becomes `alexa_live_signed_turn_missing` or `alexa_live_signed_turn_stale`, not a broken service
 - BlueBubbles may now surface `transport_unreachable` separately when the configured endpoint itself is not reachable from the Andrea host; do not confuse that with same-thread proof freshness
 - when hostname resolution is brittle, prefer `BLUEBUBBLES_BASE_URL_CANDIDATES` with `127.0.0.1` first on the Mac mini and the Cloudflare URL as fallback/diagnostic only
 - after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
@@ -920,7 +915,6 @@ Important truth for this host:
 - for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked; if the Google OAuth app is still in Testing, Calendar refresh tokens can expire after 7 days, so publish/verify it in Google Cloud Console before rerunning the current repo auth flow once
 - if the browser reaches the OAuth callback but `auth` still times out, finish the same run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - on this host, `npm run debug:google-calendar` is now the canonical live read/write proof surface and should report `PROOF_STATE: live_proven` when Google Calendar is healthy
-- if you changed `docs/alexa/interaction-model.en-US.json`, finish the console import/build and then run `npm run setup -- --step alexa-model-sync mark-synced`
 
 Then validate the public-safe Telegram surface:
 
@@ -1187,7 +1181,7 @@ Use this ladder when evaluating improvement work:
 - `npm run test:synthetic-gauntlet`
 - `npm run test:shadow-improvement`
 
-Expected outcome: external/manual proof debt such as Telegram user-session credentials, Alexa signed `IntentRequest` proof, and BlueBubbles same-thread proof stays classified as proof debt. Repo-side candidates may get patch reports, but implementation still requires an explicit human/Codex coding pass and the normal validation gate.
+Expected outcome: external/manual proof debt such as Telegram user-session credentials, and BlueBubbles same-thread proof stays classified as proof debt. Repo-side candidates may get patch reports, but implementation still requires an explicit human/Codex coding pass and the normal validation gate.
 
 ## Approval-Gated Patch Workbench And Live Proof Gauntlet
 
@@ -1212,7 +1206,6 @@ The first real patch recipe is `proof-debt-report-clarity`; it writes a docs/rep
 The live proof gauntlet separates proof debt from repo bugs:
 
 - missing Telegram user-session env is `missing_config`, not a repo failure
-- missing Alexa signed `IntentRequest` is manual proof debt
 - missing BlueBubbles same-thread message-action proof is live proof debt
 - provider quota/billing blockers remain external/provider blockers
 - repeated failure after config/proof prerequisites are present may become a repair hypothesis
@@ -1291,7 +1284,7 @@ The v32 General Intelligence Control Plane sits above all of it:
 Never claim `live_proven` from harness-only evidence. Mainline changes remain human-governed; the workbench does not auto-merge, auto-push, restart services, send messages, write calendars, change credentials, or mutate live integrations.
 
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud
-- if the miss is primarily an external blocker or manual sync step, Andrea should keep the issue saved and explain that honestly instead of auto-starting a repo fix
+- if the miss is primarily an external blocker, Andrea should keep the issue saved and explain that honestly instead of auto-starting a repo fix
 - local hotfixes may validate and restart on-host, but commit/push still require explicit approval
 
 Important pilot-mode limits:
@@ -1327,7 +1320,6 @@ If you are validating chief-of-staff behavior on the live host, add:
 
 Preferred proof shape:
 
-- one concise Alexa chief-of-staff answer
 - one richer Telegram chief-of-staff answer
 - one explainability turn
 - one daily-companion answer that still shows the shared chief-of-staff read
@@ -1456,24 +1448,7 @@ Check:
 - `/cursor` shows the live runtime task as `Current Work` while it is active
 - `Current Work -> View Output` still works even after the runtime task finishes
 
-## 8. Alexa Validation
-
-Only run a real Alexa acceptance pass if all of these are configured:
-
-- a supported Node runtime (`>=22 <23`) on the host; the repository and CI pin
-  22.22.2 through `.nvmrc`
-- `ALEXA_SKILL_ID`
-- local Alexa listener config
-- local Andrea OAuth config:
-  - `ALEXA_OAUTH_CLIENT_ID`
-  - `ALEXA_OAUTH_CLIENT_SECRET`
-  - `ALEXA_OAUTH_SCOPE`
-- HTTPS ingress or tunnel
-- Alexa console skill endpoint
-- Alexa console Authorization Code Grant account linking
-- a valid Andrea group for the OAuth target `groupFolder`
-
-If any of those are missing, record Alexa as **code-ready but setup-blocked** instead of failing the release gate for missing external setup.
+## 8. Integration Proof Freshness
 
 Status-led closeout rules:
 
@@ -1488,10 +1463,6 @@ Status-led closeout rules:
 - A healthy Telegram transport is not an end-to-end reply proof; run
   `npm run telegram:user:smoke` only when a real `/ping` send to the registered
   Telegram chat is authorized.
-- Alexa listener, OAuth, public ingress, and pinned Node 22 can be healthy while Alexa proof is still `manual_action_required`; do not claim Alexa `live_proven` until a fresh handled custom-skill proof lands
-- after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
-- if the repo Alexa model changed, the remaining release-candidate step is to import `docs/alexa/interaction-model.en-US.json`, run `Build Model`, and then run `npm run setup -- --step alexa-model-sync mark-synced`
-- if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run
 - BlueBubbles transport, webhook registration, recent-activity polling, and
   canonical same-thread `message_action` proof are separate checks. Claim
   `live_proven` only when the current status command reports a fresh complete
@@ -1499,14 +1470,7 @@ Status-led closeout rules:
 - Research and image generation are live only when their dedicated current
   probes pass. Provider configuration or cached health alone is insufficient.
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
-- typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
-- interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo
-- after this model update, re-test at least one simple local ask like `what's up` or `what time is it` and one broad routed ask like `what should I say back`, `what bills do I need to pay this week`, or `help me figure out tonight`
-- if live voice still falls into `AMAZON.FallbackIntent` after that rebuild, use the Alexa Developer Console Utterance Profiler or Intent History to capture the exact recognized phrase before changing repo code
 - `npm run debug:daily-companion` is the local pinned-Node smoke path for comparing canonical daily-companion prompts like `what am I forgetting` or `what's still open with Candace` against real `groupFolder=main` data
-- `npm run debug:alexa-conversation` is the repo-side pinned-Node harness for checking Alexa-style follow-ups like `anything else`, `what about Candace`, `remember that`, `why`, or `be a little more direct` against the real local routing stack before blaming the live voice surface
-  - include practical assistant turns like `what's on my calendar tomorrow`, `remind me to take my pills at 9`, `what bills do I need to pay this week`, `add dinner with Candace tomorrow at 6:30 PM`, `move dinner to 7`, `what's up`, `what time is it`, `what about that`, `what should I say back`, `help me plan meals this week`, and `save that` when validating recent Alexa router changes
-  - `npm run debug:alexa-conversation -- --review` now groups Alexa misses by blocker class, including no-context references, follow-up binding failures, and communication/planning should-route misses
 
 Dogfood handoff for this week:
 
@@ -1518,10 +1482,6 @@ Dogfood handoff for this week:
   - reply help
   - household follow-through
 - Manual steps still remaining:
-  - import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console if the console model is not current
-  - run `Build Model`
-  - run `npm run setup -- --step alexa-model-sync mark-synced`
-  - run one fresh Alexa daily-guidance turn: `Open Andrea Assistant` then `What am I forgetting?`
   - run one fresh Telegram daily-guidance turn: `what am I forgetting` or `what should I remember tonight`
 - Recheck rather than assume:
   - outward research and image generation may be live, provider-blocked, or
@@ -1534,46 +1494,6 @@ Dogfood handoff for this week:
   - weak confirmations
   - household smart-view usefulness
   - save/remind/handoff clarity
-
-When configured, validate in this order:
-
-1. `npm run services:status` and confirm `alexa_listener_health=healthy` plus `alexa_oauth_health=healthy`
-   - also note the `alexa_last_signed_request_*` fields before the attempt
-2. `/alexa-status`
-3. public `GET /alexa/oauth/health`
-   - if the live host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
-   - if the skill endpoint uses that host, confirm the Alexa console SSL setting is the wildcard-certificate option
-4. authoritative voice launch
-   - use a **real device** or the **authenticated Alexa Developer Console simulator**
-   - say `Open Andrea Assistant`
-   - then say `What am I forgetting?`
-   - for the practical assistant lane, also test at least:
-     - `What's on my calendar tomorrow?`
-     - `Add dinner with Candace tomorrow at 6:30 PM`
-     - `Move it to 7`
-     - `Remind me at 4 to text Candace`
-5. rerun `npm run services:status`
-   - success:
-     - `alexa_last_signed_request_type=IntentRequest`
-     - `alexa_last_signed_intent=WhatAmIForgettingIntent`
-     - `alexa_last_signed_response_source=` a handled source such as `local_companion`
-     - `alexa_live_proof=live_proven`
-     - `alexa_live_proof_kind=handled_intent`
-     - `alexa_live_proof_freshness=fresh`
-   - stale:
-     - `alexa_live_proof=near_live_only`
-     - `alexa_live_proof_kind=handled_intent`
-     - `alexa_live_proof_freshness=stale`
-   - partial / missing:
-     - `alexa_last_signed_request_type=none`
-     - `alexa_last_signed_request_type=LaunchRequest`
-     - `alexa_last_signed_response_source=received_trusted_request`
-     - `alexa_last_signed_response_source=barrier`
-     - `alexa_last_signed_response_source=fallback`
-6. if the proof still does not upgrade, check in this order:
-   - stale interaction model -> re-import `docs/alexa/interaction-model.en-US.json` and run `Build Model`
-   - endpoint/account-link mismatch
-   - signed request never reached the current host
 
 ## 9. Research And Media Validation
 
@@ -1603,7 +1523,6 @@ Important truth:
   window before the path is reported as live
 - `web_search` is in scope for research; file search is not promised unless separate file-search plumbing is added
 - Telegram is the rich research and media surface
-- Alexa should stay concise and use handoffs when the result is too long or not voice-safe
 
 ## 10. Shared Capability Graph Validation
 
@@ -1613,25 +1532,21 @@ Use this when the shared assistant core changes:
    - `npm run debug:shared-capabilities`
 2. Confirm:
    - Telegram daily guidance runs through the shared graph
-   - Alexa household guidance runs through the shared graph
-   - research returns a bounded voice-safe answer on Alexa
    - Telegram gets the richer research shape
-   - `work.current_logs` remains blocked on Alexa and allowed only on the Telegram/operator side
 
 If `OPENAI_API_KEY` is configured and the provider account is usable, a comparative or outward-facing research prompt may use the OpenAI Responses path. If it later becomes missing or quota-blocked again, the shared research proof should report that blocker honestly instead of pretending the external answer is live.
 
 Check:
 
-- concise spoken output
+- concise replies
 - one clarification at a time
 - daily guidance sounds specific and useful, not generic
-- no personal data without linking
-- no Telegram/operator wording leaks
+- no operator diagnostics in ordinary conversation
 - no fake calendar or reminder content
 
 ## 11. Cross-Channel Handoff Validation
 
-Run this when Alexa-to-Telegram continuation, voice-triggered save flows, or companion action completion changes.
+Run this when cross-channel continuation or companion action completion changes.
 
 Pinned-Node proof harness:
 
@@ -1644,14 +1559,13 @@ Expected proof points:
 - one research handoff reaches Telegram
 - one knowledge-detail handoff reaches Telegram
 - one media handoff records artifact delivery
-- one voice-triggered save-to-library flow completes
-- one voice-triggered reminder completion creates a scheduled task
+- one follow-up save-to-library flow completes
+- one follow-up reminder completion creates a scheduled task
 
 Important truth:
 
 - handoffs are explicit, not background pushes
 - only the registered main Telegram chat is used as a handoff target
-- work cockpit and other operator-only flows stay out of Alexa
 - failed delivery must surface honest blocker text instead of pretending the continuation was sent
 
 ### Optional Amazon Validation
@@ -1696,7 +1610,6 @@ Expected proof points:
 - Telegram can summarize saved material with supporting sources
 - Telegram can compare saved sources with provenance
 - Telegram can list or explain the relevant saved items
-- Alexa can produce a short saved-material summary without dumping source detail
 - `use only my saved material` stays grounded in the library path
 
 Important truth:

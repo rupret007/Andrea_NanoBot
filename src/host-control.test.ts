@@ -5,12 +5,10 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  assessAlexaLiveProof,
   assessAssistantHealthState,
   buildRuntimeCommitTruth,
   clearAssistantHealthState,
   clearAssistantReadyState,
-  formatAlexaProofAgeLabel,
   clearRuntimeAuditState,
   clearTelegramTransportState,
   detectWindowsInstallArtifacts,
@@ -18,13 +16,11 @@ import {
   determineWindowsHostServiceState,
   getAssistantHealthStatePath,
   getHostStatePath,
-  getAlexaLastSignedRequestStatePath,
   getReadyStatePath,
   getRuntimeAuditStatePath,
   getTelegramTransportStatePath,
   persistNanoclawHostState,
   readAssistantHealthState,
-  readAlexaSignedRequestProofState,
   readHostControlSnapshot,
   readRuntimeAuditState,
   readTelegramTransportState,
@@ -204,62 +200,6 @@ describe('host control state', () => {
     const snapshot = readHostControlSnapshot();
     expect(snapshot.hostState?.phase).toBe('running_ready');
     expect(snapshot.readyState?.bootId).toBe('boot-456');
-  });
-
-  it('reads Alexa proof from the canonical runtime marker path', () => {
-    const proofPath = getAlexaLastSignedRequestStatePath(tempDir);
-    fs.writeFileSync(
-      proofPath,
-      JSON.stringify({
-        lastSignedRequest: {
-          updatedAt: '2026-04-07T17:55:00.000Z',
-          requestId: 'req-canonical',
-          requestType: 'IntentRequest',
-          intentName: 'WhatAmIForgettingIntent',
-          applicationIdVerified: true,
-          linkingResolved: true,
-          groupFolder: 'main',
-          responseSource: 'local_companion',
-        },
-      }),
-    );
-
-    const proof = readAlexaSignedRequestProofState(tempDir);
-    expect(proof.lastSignedRequest?.requestId).toBe('req-canonical');
-    expect(proof.lastHandledProofIntent?.intentName).toBe(
-      'WhatAmIForgettingIntent',
-    );
-  });
-
-  it('promotes a legacy backslash Alexa proof marker to the canonical path', () => {
-    const canonicalPath = getAlexaLastSignedRequestStatePath(tempDir);
-    const legacyPath = path.join(
-      tempDir,
-      'data',
-      `runtime\\${path.basename(canonicalPath)}`,
-    );
-    fs.writeFileSync(
-      legacyPath,
-      JSON.stringify({
-        lastSignedRequest: {
-          updatedAt: '2026-04-07T17:55:00.000Z',
-          requestId: 'req-legacy',
-          requestType: 'IntentRequest',
-          intentName: 'WhatAmIForgettingIntent',
-          applicationIdVerified: true,
-          linkingResolved: true,
-          groupFolder: 'main',
-          responseSource: 'local_companion',
-        },
-      }),
-    );
-
-    const proof = readAlexaSignedRequestProofState(tempDir);
-    expect(proof.lastSignedRequest?.requestId).toBe('req-legacy');
-    expect(proof.lastHandledProofIntent?.responseSource).toBe(
-      'local_companion',
-    );
-    expect(fs.existsSync(canonicalPath)).toBe(true);
   });
 
   it('writes host state into the active cwd runtime directory', () => {
@@ -559,178 +499,6 @@ describe('assistant health assessment', () => {
 
     expect(assessment.status).toBe('stale');
     expect(assessment.detail).toContain('stale');
-  });
-});
-
-describe('Alexa live-proof assessment', () => {
-  it('treats a missing signed request as near-live only', () => {
-    const assessment = assessAlexaLiveProof({
-      lastSignedRequest: null,
-      now: new Date('2026-04-07T18:00:00.000Z'),
-    });
-
-    expect(assessment.proofState).toBe('near_live_only');
-    expect(assessment.proofKind).toBe('none');
-    expect(assessment.proofFreshness).toBe('none');
-  });
-
-  it('treats a LaunchRequest as partial proof only', () => {
-    const assessment = assessAlexaLiveProof({
-      lastSignedRequest: {
-        updatedAt: '2026-04-07T17:55:00.000Z',
-        requestId: 'req-launch',
-        requestType: 'LaunchRequest',
-        intentName: null,
-        applicationIdVerified: true,
-        linkingResolved: false,
-        groupFolder: null,
-        responseSource: 'launch',
-      },
-      now: new Date('2026-04-07T18:00:00.000Z'),
-    });
-
-    expect(assessment.proofState).toBe('near_live_only');
-    expect(assessment.proofKind).toBe('launch_only');
-    expect(assessment.proofFreshness).toBe('none');
-  });
-
-  it('requires a handled response source for live proof', () => {
-    const assessment = assessAlexaLiveProof({
-      lastSignedRequest: {
-        updatedAt: '2026-04-07T17:55:00.000Z',
-        requestId: 'req-intent',
-        requestType: 'IntentRequest',
-        intentName: 'WhatAmIForgettingIntent',
-        applicationIdVerified: true,
-        linkingResolved: true,
-        groupFolder: 'main',
-        responseSource: 'received_trusted_request',
-      },
-      now: new Date('2026-04-07T18:00:00.000Z'),
-    });
-
-    expect(assessment.proofState).toBe('near_live_only');
-    expect(assessment.proofKind).toBe('signed_intent_unhandled');
-    expect(assessment.proofFreshness).toBe('none');
-  });
-
-  it('counts a fresh handled IntentRequest as live proof', () => {
-    const assessment = assessAlexaLiveProof({
-      lastSignedRequest: {
-        updatedAt: '2026-04-07T17:55:00.000Z',
-        requestId: 'req-handled',
-        requestType: 'IntentRequest',
-        intentName: 'WhatAmIForgettingIntent',
-        applicationIdVerified: true,
-        linkingResolved: true,
-        groupFolder: 'main',
-        responseSource: 'local_companion',
-      },
-      now: new Date('2026-04-07T18:00:00.000Z'),
-    });
-
-    expect(assessment.proofState).toBe('live_proven');
-    expect(assessment.proofKind).toBe('handled_intent');
-    expect(assessment.proofFreshness).toBe('fresh');
-    expect(assessment.proofAgeMinutes).toBe(5);
-    expect(assessment.proofAgeLabel).toBe('5m');
-  });
-
-  it('treats an old handled IntentRequest as stale near-live proof', () => {
-    const assessment = assessAlexaLiveProof({
-      lastSignedRequest: {
-        updatedAt: '2026-04-05T17:55:00.000Z',
-        requestId: 'req-stale',
-        requestType: 'IntentRequest',
-        intentName: 'WhatAmIForgettingIntent',
-        applicationIdVerified: true,
-        linkingResolved: true,
-        groupFolder: 'main',
-        responseSource: 'local_companion',
-      },
-      now: new Date('2026-04-07T18:00:00.000Z'),
-    });
-
-    expect(assessment.proofState).toBe('near_live_only');
-    expect(assessment.proofKind).toBe('handled_intent');
-    expect(assessment.proofFreshness).toBe('stale');
-    expect(assessment.proofAgeLabel).toContain('d');
-  });
-
-  it('keeps a fresh handled proof turn even when a later SessionEndedRequest is recorded', () => {
-    const assessment = assessAlexaLiveProof({
-      lastSignedRequest: {
-        updatedAt: '2026-04-07T17:59:30.000Z',
-        requestId: 'req-session-ended',
-        requestType: 'SessionEndedRequest',
-        intentName: null,
-        applicationIdVerified: true,
-        linkingResolved: false,
-        groupFolder: null,
-        responseSource: 'fallback',
-      },
-      lastHandledProofIntent: {
-        updatedAt: '2026-04-07T17:55:00.000Z',
-        requestId: 'req-handled',
-        requestType: 'IntentRequest',
-        intentName: 'WhatAmIForgettingIntent',
-        applicationIdVerified: true,
-        linkingResolved: true,
-        groupFolder: 'main',
-        responseSource: 'local_companion',
-      },
-      now: new Date('2026-04-07T18:00:00.000Z'),
-    });
-
-    expect(assessment.proofState).toBe('live_proven');
-    expect(assessment.proofKind).toBe('handled_intent');
-    expect(assessment.lastSignedRequest?.requestType).toBe(
-      'SessionEndedRequest',
-    );
-    expect(assessment.lastHandledProofIntent?.intentName).toBe(
-      'WhatAmIForgettingIntent',
-    );
-  });
-
-  it('keeps a fresh handled proof turn even when a later fallback intent is recorded', () => {
-    const assessment = assessAlexaLiveProof({
-      lastSignedRequest: {
-        updatedAt: '2026-04-07T17:59:30.000Z',
-        requestId: 'req-fallback',
-        requestType: 'IntentRequest',
-        intentName: 'MemoryControlIntent',
-        applicationIdVerified: true,
-        linkingResolved: true,
-        groupFolder: 'main',
-        responseSource: 'fallback',
-      },
-      lastHandledProofIntent: {
-        updatedAt: '2026-04-07T17:55:00.000Z',
-        requestId: 'req-handled',
-        requestType: 'IntentRequest',
-        intentName: 'WhatAmIForgettingIntent',
-        applicationIdVerified: true,
-        linkingResolved: true,
-        groupFolder: 'main',
-        responseSource: 'local_companion',
-      },
-      now: new Date('2026-04-07T18:00:00.000Z'),
-    });
-
-    expect(assessment.proofState).toBe('live_proven');
-    expect(assessment.proofKind).toBe('handled_intent');
-    expect(assessment.lastSignedRequest?.intentName).toBe(
-      'MemoryControlIntent',
-    );
-    expect(assessment.lastHandledProofIntent?.intentName).toBe(
-      'WhatAmIForgettingIntent',
-    );
-  });
-
-  it('formats Alexa proof age labels compactly', () => {
-    expect(formatAlexaProofAgeLabel(null)).toBe('none');
-    expect(formatAlexaProofAgeLabel(30_000)).toBe('<1m');
-    expect(formatAlexaProofAgeLabel(90 * 60_000)).toBe('1h 30m');
   });
 });
 

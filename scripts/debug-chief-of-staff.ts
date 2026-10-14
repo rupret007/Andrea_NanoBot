@@ -162,7 +162,7 @@ async function main(): Promise<void> {
   });
 
   const tonight = await buildChiefOfStaffTurn({
-    channel: 'alexa',
+    channel: 'bluebubbles',
     ...context,
     text: 'what should I remember tonight',
     mode: 'plan_horizon',
@@ -176,7 +176,7 @@ async function main(): Promise<void> {
   });
 
   const nextMove = await buildChiefOfStaffTurn({
-    channel: 'alexa',
+    channel: 'bluebubbles',
     ...context,
     text: 'what should I do next',
     mode: 'prioritize',

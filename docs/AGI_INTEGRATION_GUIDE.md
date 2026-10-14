@@ -104,6 +104,5 @@ A future PR could add a small web UI under `scripts/dashboard.ts`, but the JSONL
 | 1 | Migrate Telegram channel; observe traces for a day |
 | 2 | Migrate Slack + Discord |
 | 3 | Migrate WhatsApp + Gmail |
-| 4 | Migrate Alexa (uses `direct` strategy by default for latency) |
 | 5 | Schedule the reflector |
 | 7 | Remove the feature flag |

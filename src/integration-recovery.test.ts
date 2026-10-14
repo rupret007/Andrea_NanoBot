@@ -66,9 +66,7 @@ function proofEntry(
 function proofReport(
   entries: LiveProofGauntletEntry[],
 ): LiveProofGauntletReport {
-  const dailyCoreEntries = entries.filter(
-    (entry) => !/Alexa signed IntentRequest/i.test(entry.proofName),
-  );
+  const dailyCoreEntries = entries;
   return {
     generatedAt,
     entries,
@@ -82,11 +80,7 @@ function proofReport(
     dailyCoreProofDebtCount: dailyCoreEntries.filter(
       (entry) => entry.status !== 'live_proven',
     ).length,
-    optionalProofDebtCount: entries.filter(
-      (entry) =>
-        /Alexa signed IntentRequest/i.test(entry.proofName) &&
-        entry.status !== 'live_proven',
-    ).length,
+    optionalProofDebtCount: 0,
     repoWorkRequiredCount: entries.filter((entry) => entry.repoWorkRequired)
       .length,
     nextAction: 'next proof action',
@@ -288,27 +282,6 @@ describe('integration recovery', () => {
     expect(bluebubbles?.successCheck).toContain('debug:bluebubbles');
   });
 
-  it('classifies stale Alexa signed proof as manual proof work', () => {
-    const report = buildReport({
-      statuses: [
-        integrationStatus('alexa', 'Alexa', 'manual_action_required', {
-          blockerOwner: 'manual',
-          nextAction: 'Use a real signed simulator/device turn.',
-        }),
-      ],
-      proofs: [
-        proofEntry('Alexa signed IntentRequest proof', 'stale', {
-          lastProofAt: '2026-06-10T18:30:00.000Z',
-        }),
-      ],
-    });
-
-    const alexa = report.items.find((item) => item.integrationId === 'alexa');
-    expect(alexa?.recoveryClass).toBe('manual_proof');
-    expect(alexa?.lastKnownGoodAt).toBe('2026-06-10T18:30:00.000Z');
-    expect(alexa?.successCheck).toContain('/alexa-status');
-  });
-
   it('classifies provider quota as an external provider blocker', () => {
     const report = buildReport({
       statuses: [],
@@ -401,10 +374,6 @@ describe('integration recovery', () => {
         blockerOwner: 'external',
         detail: 'TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH are missing.',
       }),
-      integrationStatus('alexa', 'Alexa', 'manual_action_required', {
-        blockerOwner: 'manual',
-        detail: 'No handled signed Alexa IntentRequest is recorded.',
-      }),
       integrationStatus(
         'bluebubbles',
         'BlueBubbles / iMessage',
@@ -417,7 +386,7 @@ describe('integration recovery', () => {
     ]);
 
     const attempts = await Promise.all(
-      ['google_calendar', 'telegram', 'alexa', 'bluebubbles'].map((id) =>
+      ['google_calendar', 'telegram', 'bluebubbles'].map((id) =>
         runIntegrationRepair({
           id,
           apply: true,
@@ -435,7 +404,6 @@ describe('integration recovery', () => {
 
     expect(text).toContain('Recorded recovery checklist for Google Calendar');
     expect(text).toContain('Recorded recovery checklist for Telegram');
-    expect(text).toContain('Recorded recovery checklist for Alexa');
     expect(text).toContain('Recorded proof-drill checklist');
     expect(text).not.toMatch(/OAuth (?:was )?(?:fixed|repaired|completed)/i);
     expect(text).not.toMatch(/credentials (?:were )?(?:added|fixed|repaired)/i);

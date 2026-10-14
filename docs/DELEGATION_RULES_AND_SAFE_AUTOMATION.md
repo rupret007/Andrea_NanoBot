@@ -114,7 +114,7 @@ The normal flow is:
 
 If the request is too ambiguous, Andrea asks one short narrowing question first.
 
-## Telegram Versus Alexa
+## Channel Behavior
 
 ### Telegram
 
@@ -136,19 +136,6 @@ Telegram can also show inline controls such as:
 - `Auto-apply when safe`
 - `Why this fired`
 - `Use only here`
-
-### Alexa
-
-Alexa stays concise.
-
-It can:
-
-- propose remembering a new default
-- confirm a simple rule
-- mention that it used your usual rule
-- switch a focused rule back to `always ask`
-
-If management or inspection gets detailed, Alexa should hand off to Telegram.
 
 ### BlueBubbles
 
@@ -195,7 +182,7 @@ The goal is to avoid silently carrying a bad default forever.
 For repo-side validation, run:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa.test.ts src/outcome-reviews.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/outcome-reviews.test.ts
 npm run typecheck
 npm run build
 npm run test

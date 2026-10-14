@@ -74,12 +74,10 @@ describe('capability resource broker', () => {
       optionalInputs: [],
       requiresLinkedAccount: false,
       requiresConfirmation: false,
-      safeForAlexa: true,
       safeForTelegram: true,
       safeForBlueBubbles: true,
       operatorOnly: false,
       preferredOutputShape: {
-        alexa: 'voice_brief',
         telegram: 'chat_brief',
         bluebubbles: 'chat_brief',
       },

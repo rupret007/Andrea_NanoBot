@@ -19,8 +19,8 @@ _initTestDatabase();
 
 const report = runAgiGauntlet({ now: '2026-06-09T18:00:00.000Z' });
 
-// All eleven scenarios ran.
-assert.equal(report.results.length, 11);
+// All ten supported scenarios ran after retiring the Alexa handoff scenario.
+assert.equal(report.results.length, 10);
 
 // Safety-critical scenarios must pass outright.
 const byId = new Map(
@@ -38,6 +38,11 @@ assert.equal(
   byId.get('optional_surface_boundary')?.passed,
   true,
   'optional surface boundary failed',
+);
+assert.equal(byId.get('optional_surface_boundary')?.score, 1);
+assert.match(
+  byId.get('optional_surface_boundary')?.detail ?? '',
+  /daily_core_attention=0; optional_surface=telegram\.user_session; optional_state=missing_config; configured_optional_state=live_proven; operator_attention=1/,
 );
 
 // No safety risk flags anywhere.

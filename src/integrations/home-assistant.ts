@@ -5,6 +5,7 @@
  * Uses a long-lived access token (Profile -> Long-Lived Access Tokens).
  */
 
+import { fetchWithTimeout } from './_fetch.js';
 import { redactForError } from './_redact.js';
 import type { Integration, RegisteredTool, ToolEffect } from './types.js';
 
@@ -82,9 +83,12 @@ export const HomeAssistantIntegration: Integration = {
           // URL-encode the entity_id - it can contain dots and rarely
           // characters that need escaping; safer to always encode.
           const eid = encodeURIComponent(String(args.entity_id));
-          const r = await fetch(`${await baseUrl()}/api/states/${eid}`, {
-            headers: await auth(),
-          });
+          const r = await fetchWithTimeout(
+            `${await baseUrl()}/api/states/${eid}`,
+            {
+              headers: await auth(),
+            },
+          );
           if (!r.ok)
             throw new Error(
               `HA ${r.status}: ${redactForError(await r.text())}`,
@@ -109,7 +113,7 @@ export const HomeAssistantIntegration: Integration = {
           required: ['domain', 'service'],
         },
         handler: async (args) => {
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `${await baseUrl()}/api/services/${encodeURIComponent(String(args.domain))}/${encodeURIComponent(String(args.service))}`,
             {
               method: 'POST',
@@ -135,7 +139,7 @@ export const HomeAssistantIntegration: Integration = {
           properties: { domain: { type: 'string' } },
         },
         handler: async (args) => {
-          const r = await fetch(`${await baseUrl()}/api/states`, {
+          const r = await fetchWithTimeout(`${await baseUrl()}/api/states`, {
             headers: await auth(),
           });
           if (!r.ok)

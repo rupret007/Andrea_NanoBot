@@ -564,16 +564,9 @@ export function buildActionLifecycleReport(
 
 export function formatActionLifecycleReport(
   report: ActionLifecycleReport = buildActionLifecycleReport(),
-  options: { channel?: ControlPlaneChannel } = {},
+  _options: { channel?: ControlPlaneChannel } = {},
 ): string {
-  const concise = options.channel === 'alexa';
   const waiting = report.waitingOnUser;
-  if (concise) {
-    if (!waiting.length) {
-      return 'Nothing is waiting on you right now.';
-    }
-    return `${waiting.length} action${waiting.length === 1 ? ' is' : 's are'} waiting on you. The top one: ${waiting[0].title}.`;
-  }
   const lines: string[] = ['*Action Lifecycle*'];
   lines.push(`Tracked actions: ${report.totalTracked}`);
   const statuses = Object.entries(report.byStatus)

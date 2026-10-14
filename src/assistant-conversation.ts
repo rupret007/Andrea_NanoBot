@@ -1,21 +1,14 @@
-import {
-  clearAlexaConversationContext as clearAlexaConversationContextRecord,
-  getAlexaConversationContext,
-  purgeExpiredAlexaConversationContexts,
-  upsertAlexaConversationContext,
-} from './db.js';
-import {
-  type AlexaCompanionGuidanceGoal,
-  type AlexaConversationContext,
-  type AlexaConversationFollowupAction,
-  type AlexaConversationSubjectKind,
-  type CompanionToneProfile,
-  type EverydayListScope,
-  type PersonalityCooldownState,
+import type {
+  AssistantCompanionGuidanceGoal,
+  AssistantConversationFollowupAction,
+  AssistantConversationSubjectKind,
+  CompanionToneProfile,
+  EverydayListScope,
+  PersonalityCooldownState,
 } from './types.js';
 import type { AssistantCapabilityId } from './assistant-capabilities.js';
 
-export interface AlexaConversationSubjectData {
+export interface AssistantConversationSubjectData {
   lastIntentFamily?: string;
   lastRouteOutcome?: string;
   lastUserUtterance?: string;
@@ -106,16 +99,15 @@ export interface AlexaConversationSubjectData {
   activeOperatingProfileId?: string;
 }
 
-export interface AlexaConversationState {
+export interface AssistantConversationState {
   flowKey: string;
-  subjectKind: AlexaConversationSubjectKind;
-  subjectData: AlexaConversationSubjectData;
+  subjectKind: AssistantConversationSubjectKind;
+  subjectData: AssistantConversationSubjectData;
   summaryText: string;
-  supportedFollowups: AlexaConversationFollowupAction[];
+  supportedFollowups: AssistantConversationFollowupAction[];
   styleHints: {
     responseStyle?: 'default' | 'short_direct' | 'expanded';
-    channelMode?: 'alexa_companion';
-    guidanceGoal?: AlexaCompanionGuidanceGoal;
+    guidanceGoal?: AssistantCompanionGuidanceGoal;
     initiativeLevel?: 'measured';
     prioritizationLens?:
       | 'general'
@@ -133,15 +125,14 @@ export interface AlexaConversationState {
   };
 }
 
-export interface AlexaConversationFollowupResolution {
+export interface AssistantConversationFollowupResolution {
   ok: boolean;
-  action?: AlexaConversationFollowupAction;
+  action?: AssistantConversationFollowupAction;
   text?: string;
   speech?: string;
 }
 
-const DEFAULT_ALEXA_CONVERSATION_TTL_MS = 10 * 60 * 1000;
-const COMPANION_COMPLETION_ACTIONS: AlexaConversationFollowupAction[] = [
+const COMPANION_COMPLETION_ACTIONS: AssistantConversationFollowupAction[] = [
   'send_details',
   'save_to_library',
   'track_thread',
@@ -154,86 +145,8 @@ const COMPANION_COMPLETION_ACTIONS: AlexaConversationFollowupAction[] = [
   'show_rules',
 ];
 
-function parseJsonSafe<T>(value: string, fallback: T): T {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-export function parseAlexaConversationState(
-  record: AlexaConversationContext | undefined,
-): AlexaConversationState | undefined {
-  if (!record) return undefined;
-  return {
-    flowKey: record.flowKey,
-    subjectKind: record.subjectKind,
-    subjectData: parseJsonSafe<AlexaConversationSubjectData>(
-      record.subjectJson,
-      {},
-    ),
-    summaryText: record.summaryText,
-    supportedFollowups: parseJsonSafe<AlexaConversationFollowupAction[]>(
-      record.supportedFollowupsJson,
-      [],
-    ),
-    styleHints: parseJsonSafe<AlexaConversationState['styleHints']>(
-      record.styleJson,
-      {},
-    ),
-  };
-}
-
-export function loadAlexaConversationState(
-  principalKey: string,
-  accessTokenHash: string,
-  now = new Date().toISOString(),
-): AlexaConversationState | undefined {
-  purgeExpiredAlexaConversationContexts(now);
-  return parseAlexaConversationState(
-    getAlexaConversationContext(principalKey, accessTokenHash, now),
-  );
-}
-
-export function saveAlexaConversationState(
-  principalKey: string,
-  accessTokenHash: string,
-  groupFolder: string,
-  state: AlexaConversationState,
-  ttlMs = DEFAULT_ALEXA_CONVERSATION_TTL_MS,
-  now = new Date(),
-): AlexaConversationContext {
-  const record: AlexaConversationContext = {
-    principalKey,
-    accessTokenHash,
-    groupFolder,
-    flowKey: state.flowKey,
-    subjectKind: state.subjectKind,
-    subjectJson: JSON.stringify(state.subjectData || {}),
-    summaryText: state.summaryText,
-    supportedFollowupsJson: JSON.stringify(state.supportedFollowups || []),
-    styleJson: JSON.stringify(state.styleHints || {}),
-    createdAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
-    updatedAt: now.toISOString(),
-  };
-  upsertAlexaConversationContext(record);
-  return record;
-}
-
-export function clearAlexaConversationState(principalKey: string): void {
-  clearAlexaConversationContextRecord(principalKey);
-}
-
-export function getAlexaConversationReferencedFactId(
-  state: AlexaConversationState | undefined,
-): string | undefined {
-  return state?.subjectData.profileFactId?.trim() || undefined;
-}
-
-function resolveAlexaConversationAnchor(
-  state: AlexaConversationState | undefined,
+function resolveAssistantConversationAnchor(
+  state: AssistantConversationState | undefined,
 ): string | undefined {
   return (
     state?.subjectData.activeVoiceAnchor?.trim() ||
@@ -244,10 +157,10 @@ function resolveAlexaConversationAnchor(
   );
 }
 
-export function resolveAlexaConversationFollowup(
+export function resolveAssistantConversationFollowup(
   rawText: string,
-  state: AlexaConversationState | undefined,
-): AlexaConversationFollowupResolution {
+  state: AssistantConversationState | undefined,
+): AssistantConversationFollowupResolution {
   const text = rawText.trim();
   const normalized = text.toLowerCase();
   if (!state) {
@@ -266,11 +179,11 @@ export function resolveAlexaConversationFollowup(
     state.subjectData.lastAnswerSummary?.trim() ||
     state.summaryText?.trim(),
   );
-  const activeAnchor = resolveAlexaConversationAnchor(state);
+  const activeAnchor = resolveAssistantConversationAnchor(state);
   const resolveSupported = (
-    action: AlexaConversationFollowupAction,
+    action: AssistantConversationFollowupAction,
     nextText = text,
-  ): AlexaConversationFollowupResolution =>
+  ): AssistantConversationFollowupResolution =>
     supported.has(action) ||
     (COMPANION_COMPLETION_ACTIONS.includes(action) &&
       hasCompanionCompletionContext)

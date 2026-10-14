@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const settings = vi.hoisted(() => ({
@@ -121,12 +123,12 @@ describe('optional Web Bob bridge runtime boundary', () => {
   it('suppresses automatic alerts only while a configured maintenance file exists', () => {
     vi.stubEnv(
       'ANDREA_WEBBOB_RELEASE_ALERT_HOLD',
-      new URL(import.meta.url).pathname,
+      fileURLToPath(import.meta.url),
     );
     expect(isWebBobReleaseAlertHold()).toBe(true);
     vi.stubEnv(
       'ANDREA_WEBBOB_RELEASE_ALERT_HOLD',
-      new URL(import.meta.url).pathname + '.absent',
+      fileURLToPath(import.meta.url) + '.absent',
     );
     expect(isWebBobReleaseAlertHold()).toBe(false);
     vi.stubEnv('ANDREA_WEBBOB_RELEASE_ALERT_HOLD', 'relative');

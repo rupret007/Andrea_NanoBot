@@ -1,3 +1,4 @@
+import { listCurrentToolReliabilityRollups } from './tool-reliability.js';
 import { createHash } from 'node:crypto';
 
 import { redactCouncilText } from './council-safety.js';
@@ -13,7 +14,6 @@ import {
   listRecentResponseFeedback,
   listRepairAttempts,
   listSkillPlaybookRuns,
-  listToolReliabilityRollups,
   persistImprovementLabBatch,
 } from './db.js';
 import {
@@ -250,7 +250,6 @@ function proofGapHypotheses(now: string): ImprovementHypothesis[] {
   const truth = buildFieldTrialOperatorTruth();
   const entries: Array<[string, FieldTrialSurfaceTruth]> = [
     ['Telegram user session', truth.telegram],
-    ['Alexa signed IntentRequest', truth.alexa],
     ['BlueBubbles same-thread proof', truth.bluebubbles],
     ['Google Calendar proof', truth.googleCalendar],
     ['Research proof', truth.research],
@@ -282,7 +281,7 @@ function proofGapHypotheses(now: string): ImprovementHypothesis[] {
             : 'Improves operator diagnostics for proof-state drift.',
         riskLevel: external ? 'medium' : 'low',
         confidence: external ? 0.82 : 0.72,
-        impact: /telegram|bluebubbles|alexa/i.test(label) ? 0.85 : 0.62,
+        impact: /telegram|bluebubbles/i.test(label) ? 0.85 : 0.62,
         frequency: 0.55,
         testability: external ? 0.35 : 0.78,
         trustSafetyBenefit: 0.9,
@@ -413,12 +412,9 @@ function reliabilityHypotheses(
     )
     .slice(0, 24)
     .map((rollup) => {
-      const external =
-        /^provider:|^integration:telegram|^integration:alexa/.test(
-          rollup.subjectId,
-        )
-          ? rollup.currentHealth === 'blocked'
-          : false;
+      const external = /^provider:|^integration:telegram/.test(rollup.subjectId)
+        ? rollup.currentHealth === 'blocked'
+        : false;
       const unknown =
         rollup.sampleCount === 0 || rollup.currentHealth === 'unknown';
       const highRiskSubject =
@@ -959,7 +955,7 @@ function collectHypotheses(now: string): {
     providers: providerHealth,
   });
   const repairs = listRepairAttempts({ limit: 120 });
-  const rollups = listToolReliabilityRollups({ limit: 200 });
+  const rollups = listCurrentToolReliabilityRollups({ limit: 200 });
   const reflections = listCognitiveReflectionSignals({ limit: 240 });
   const distillations = listLearningDistillations({ limit: 160 });
   const skillRuns = listSkillPlaybookRuns({ limit: 120 });

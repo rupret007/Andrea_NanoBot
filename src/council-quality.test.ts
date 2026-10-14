@@ -416,7 +416,7 @@ describe('council quality ledger', () => {
     expect(baseEvidenceScorecard).toBeDefined();
     for (const [index, gap] of [
       'integration_bluebubbles_needs_proof',
-      'integration_alexa_manual_action_required',
+      'integration_google_calendar_manual_action_required',
     ].entries()) {
       recordCouncilRunLedger({
         councilRunId: `council-gap-${index}`,
@@ -443,12 +443,12 @@ describe('council quality ledger', () => {
       providerHealth: healthyCoreProviders,
       integrationHealth: [
         { integrationId: 'bluebubbles', state: 'healthy' },
-        { integrationId: 'alexa', state: 'manual_action_required' },
+        { integrationId: 'google_calendar', state: 'manual_action_required' },
       ],
     });
 
     expect(report.evidenceGaps).toEqual([
-      'integration_alexa_manual_action_required',
+      'integration_google_calendar_manual_action_required',
     ]);
     expect(report.historicalEvidenceGaps).toEqual([]);
     expect(report.resolvedEvidenceGaps).toEqual([
@@ -654,7 +654,7 @@ describe('council quality ledger', () => {
           sourceCoverage: { provider_health: 1 },
           privateContentPolicy: 'metadata_only',
           gapCount: 1,
-          gapIds: ['integration_alexa_manual_action_required'],
+          gapIds: ['integration_google_calendar_manual_action_required'],
           sourceClasses: ['provider_health'],
           confidencePenalty: 0.1,
         },
@@ -673,7 +673,9 @@ describe('council quality ledger', () => {
 
     expect(formatted).toContain('Council Replay');
     expect(formatted).toContain('Members:');
-    expect(formatted).toContain('integration_alexa_manual_action_required');
+    expect(formatted).toContain(
+      'integration_google_calendar_manual_action_required',
+    );
     expect(formatted).not.toContain('sk-proj-');
     expect(JSON.stringify(report)).not.toContain('sk-proj-');
     expect(report.privacy.rawPromptsStored).toBe(false);

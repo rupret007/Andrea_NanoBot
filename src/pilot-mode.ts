@@ -31,7 +31,6 @@ export const FLAGSHIP_PILOT_JOURNEYS: PilotJourneyId[] = [
   'mission_planning',
   'work_cockpit',
   'cross_channel_handoff',
-  'alexa_orientation',
 ];
 
 export interface PilotJourneySeed {
@@ -168,32 +167,6 @@ function reconcileOpenPilotIssues(
   });
 }
 
-export interface AlexaUtteranceReviewItem {
-  utterance: string;
-  family: string;
-  routeOutcome: string;
-  blockerClass: string;
-  attempts: number;
-  latestAt: string;
-  latestOutcome: PilotJourneyOutcome;
-  operatorHint: string;
-}
-
-export interface AlexaUtteranceReviewDigest {
-  totalSignals: number;
-  groupedPatterns: AlexaUtteranceReviewItem[];
-  repeatedPatterns: AlexaUtteranceReviewItem[];
-  fallbackMisses: AlexaUtteranceReviewItem[];
-  clarifierRecoveries: AlexaUtteranceReviewItem[];
-  carrierPhraseGaps: AlexaUtteranceReviewItem[];
-  handoffRequired: AlexaUtteranceReviewItem[];
-  noContextReferences: AlexaUtteranceReviewItem[];
-  followupBindingFailures: AlexaUtteranceReviewItem[];
-  communicationShouldRoute: AlexaUtteranceReviewItem[];
-  planningShouldRoute: AlexaUtteranceReviewItem[];
-  voiceShapeRepetition: AlexaUtteranceReviewItem[];
-}
-
 export function isPilotLoggingEnabled(): boolean {
   const raw = (process.env.ANDREA_PILOT_LOGGING_ENABLED || '')
     .trim()
@@ -259,20 +232,6 @@ export function resolvePilotJourneyFromCapability(params: {
   const systemSeed = {
     routeKey: params.capabilityId,
   };
-
-  if (
-    params.channel === 'alexa' &&
-    (params.capabilityId.startsWith('daily.') ||
-      params.capabilityId === 'household.candace_upcoming' ||
-      lowerText === 'anything else')
-  ) {
-    return {
-      journeyId: 'alexa_orientation',
-      systemsInvolved: ['alexa', 'daily_companion'],
-      summaryText: 'Alexa orientation turn',
-      ...systemSeed,
-    };
-  }
 
   if (
     params.capabilityId === 'daily.loose_ends' ||
@@ -603,17 +562,26 @@ export function capturePilotIssue(params: PilotIssueCaptureParams): {
 export function buildPilotReviewSnapshot(
   now = new Date(),
 ): PilotReviewSnapshot {
+  const currentChannels: ReadonlyArray<PilotJourneyEventRecord['channel']> = [
+    'telegram',
+    'bluebubbles',
+  ];
   const retentionCutoffIso = new Date(
     now.getTime() - PILOT_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
   const liveProofCutoffIso = new Date(
     now.getTime() - PILOT_LIVE_PROOF_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const recentEvents = listRecentPilotJourneyEvents({ limit: 300 }).filter(
-    (event) => event.startedAt >= retentionCutoffIso,
-  );
+  // Keep retired-channel records in storage, but exclude them from current
+  // usage, readiness, and repair recommendations.
+  // Channel filtering happens in SQL before LIMIT so retired history can
+  // never crowd current records out of the window.
+  const recentEvents = listRecentPilotJourneyEvents({
+    limit: 300,
+    channels: currentChannels,
+  }).filter((event) => event.startedAt >= retentionCutoffIso);
   const openIssues = reconcileOpenPilotIssues(
-    listPilotIssues({ status: 'open', limit: 1000 }),
+    listPilotIssues({ status: 'open', limit: 1000, channels: currentChannels }),
   );
   return {
     loggingEnabled: isPilotLoggingEnabled(),
@@ -787,150 +755,5 @@ export function buildPilotReviewDigest(now = new Date()): PilotReviewDigest {
     recentProblemEvents,
     currentActionableProblemEvents,
     historicalRecurringFailures,
-  };
-}
-
-function parseAlexaVoiceRouterKey(routeKey: string | null | undefined): {
-  family: string;
-  routeOutcome: string;
-} | null {
-  if (!routeKey) return null;
-  const match = routeKey.match(/^alexa_voice_router:([^:]+):([^:]+)$/);
-  if (!match) return null;
-  return {
-    family: match[1] || 'unknown',
-    routeOutcome: match[2] || 'unknown',
-  };
-}
-
-function buildAlexaOperatorHint(
-  blockerClass: string,
-  routeOutcome: string,
-): string {
-  if (blockerClass === 'no_context_reference') {
-    return 'Ask for one concrete anchor, like a person, a plan, or something to remember, instead of collapsing into memory save.';
-  }
-  if (blockerClass === 'followup_binding_failed') {
-    return 'Bind this follow-up to the active Alexa frame so save, remind, and handoff requests use the last actionable context.';
-  }
-  if (blockerClass === 'communication_should_route') {
-    return 'Map this phrasing directly into the communication companion instead of treating it like a generic open ask.';
-  }
-  if (blockerClass === 'planning_should_route') {
-    return 'Map this phrasing into planning or daily guidance before the assistant bridge fallback.';
-  }
-  if (blockerClass === 'voice_shape_repetition') {
-    return 'Tighten the Alexa voice shaping so the lead and supporting lines do not repeat the same point.';
-  }
-  if (blockerClass === 'carrier_phrase_missing') {
-    return 'Add or refine a carrier phrase for this utterance family in the Alexa interaction model.';
-  }
-  if (blockerClass === 'weak_clarifier_recovery') {
-    return 'Tighten the Alexa clarifier so it asks for one concrete anchor without resetting the thread.';
-  }
-  if (blockerClass === 'operator_handoff_required') {
-    return 'Keep this request on Telegram or another richer surface; it is not a voice-safe Alexa action.';
-  }
-  if (
-    blockerClass === 'fallback_unmatched_open_utterance' &&
-    routeOutcome === 'assistant_bridge'
-  ) {
-    return 'Consider adding a carrier phrase or explicit shared-capability mapping if users repeat this wording.';
-  }
-  if (blockerClass === 'fallback_unmatched_open_utterance') {
-    return 'Review whether this utterance should map into a broader Alexa carrier phrase or shared capability.';
-  }
-  return 'Review the recent Alexa recovery path and decide whether this pattern needs a stronger carrier phrase or clarifier.';
-}
-
-export function buildAlexaUtteranceReviewDigest(
-  now = new Date(),
-): AlexaUtteranceReviewDigest {
-  const snapshot = buildPilotReviewSnapshot(now);
-  const grouped = new Map<string, AlexaUtteranceReviewItem>();
-
-  for (const event of snapshot.recentEvents) {
-    if (event.channel !== 'alexa') continue;
-    const parsedRoute = parseAlexaVoiceRouterKey(event.routeKey);
-    if (!parsedRoute) continue;
-    const utterance = sanitizePilotSummary(
-      event.summaryText,
-      'unknown alexa utterance',
-    );
-    const blockerClass = event.blockerClass || 'none';
-    const latestAt = event.completedAt || event.startedAt;
-    const key = [
-      normalizeText(utterance),
-      parsedRoute.family,
-      parsedRoute.routeOutcome,
-      blockerClass,
-    ].join('::');
-
-    const existing = grouped.get(key);
-    if (!existing) {
-      grouped.set(key, {
-        utterance,
-        family: parsedRoute.family,
-        routeOutcome: parsedRoute.routeOutcome,
-        blockerClass,
-        attempts: 1,
-        latestAt,
-        latestOutcome: event.outcome,
-        operatorHint: buildAlexaOperatorHint(
-          blockerClass,
-          parsedRoute.routeOutcome,
-        ),
-      });
-      continue;
-    }
-
-    existing.attempts += 1;
-    if (Date.parse(latestAt) >= Date.parse(existing.latestAt)) {
-      existing.latestAt = latestAt;
-      existing.latestOutcome = event.outcome;
-    }
-  }
-
-  const groupedPatterns = Array.from(grouped.values()).sort((left, right) => {
-    if (right.attempts !== left.attempts) {
-      return right.attempts - left.attempts;
-    }
-    return Date.parse(right.latestAt) - Date.parse(left.latestAt);
-  });
-
-  return {
-    totalSignals: groupedPatterns.reduce(
-      (total, item) => total + item.attempts,
-      0,
-    ),
-    groupedPatterns,
-    repeatedPatterns: groupedPatterns.filter((item) => item.attempts > 1),
-    fallbackMisses: groupedPatterns.filter(
-      (item) => item.blockerClass === 'fallback_unmatched_open_utterance',
-    ),
-    clarifierRecoveries: groupedPatterns.filter(
-      (item) => item.blockerClass === 'weak_clarifier_recovery',
-    ),
-    carrierPhraseGaps: groupedPatterns.filter(
-      (item) => item.blockerClass === 'carrier_phrase_missing',
-    ),
-    handoffRequired: groupedPatterns.filter(
-      (item) => item.blockerClass === 'operator_handoff_required',
-    ),
-    noContextReferences: groupedPatterns.filter(
-      (item) => item.blockerClass === 'no_context_reference',
-    ),
-    followupBindingFailures: groupedPatterns.filter(
-      (item) => item.blockerClass === 'followup_binding_failed',
-    ),
-    communicationShouldRoute: groupedPatterns.filter(
-      (item) => item.blockerClass === 'communication_should_route',
-    ),
-    planningShouldRoute: groupedPatterns.filter(
-      (item) => item.blockerClass === 'planning_should_route',
-    ),
-    voiceShapeRepetition: groupedPatterns.filter(
-      (item) => item.blockerClass === 'voice_shape_repetition',
-    ),
   };
 }

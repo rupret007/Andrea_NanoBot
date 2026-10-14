@@ -8,7 +8,7 @@
 
 ## Overview
 
-The AGI layer is a **bolt-on** to the existing NanoClaw / Andrea_NanoBot orchestrator. It does not replace `src/index.ts`, the channel registry, or the container runtime. Channels (WhatsApp, Telegram, Slack, Discord, Gmail, Alexa, BlueBubbles) continue to own message I/O. They now ask the AGI runtime "what should I say?" instead of invoking the agent SDK directly.
+The AGI layer is a **bolt-on** to the existing NanoClaw / Andrea_NanoBot orchestrator. It does not replace `src/index.ts`, the channel registry, or the container runtime. Channels (WhatsApp, Telegram, Slack, Discord, Gmail, BlueBubbles) continue to own message I/O. They now ask the AGI runtime "what should I say?" instead of invoking the agent SDK directly.
 
 ```
 channel.onMessage(text) ──▶ AgiRuntime.ask({scope, text}) ──▶ string reply

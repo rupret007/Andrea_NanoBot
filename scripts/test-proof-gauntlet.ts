@@ -35,17 +35,6 @@ const fakeTruth: any = {
   journeys: {
     ordinary_chat: surface('near_live_only', 'none', 'Send hi in Telegram.'),
   },
-  alexa: {
-    ...surface(
-      'near_live_only',
-      'external',
-      'Use Alexa app/device for a signed IntentRequest.',
-      'No handled signed Alexa IntentRequest is recorded.',
-    ),
-    lastHandledProofAt: 'none',
-    lastSignedRequestAt: 'none',
-    proofFreshness: 'none',
-  },
   bluebubbles: {
     ...surface(
       'degraded_but_usable',
@@ -86,10 +75,6 @@ assert.equal(
   false,
 );
 assert.equal(
-  byName.get('Alexa signed IntentRequest proof')?.status,
-  'externally_blocked',
-);
-assert.equal(
   byName.get('BlueBubbles same-thread message-action proof')?.status,
   'near_live_only',
 );
@@ -102,7 +87,6 @@ assert.equal(
   'externally_blocked',
 );
 assert.ok(report.proofDebtCount >= 4);
-assert.equal(report.optionalProofDebtCount, 1);
 assert.equal(report.dailyCoreLiveProvenCount, 2);
 assert.equal(report.dailyCoreProofDebtCount, 4);
 assert.equal(report.repoWorkRequiredCount, 0);

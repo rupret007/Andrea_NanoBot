@@ -40,7 +40,6 @@ type HealthSeverity =
 type TransportKind =
   | 'telegram'
   | 'bluebubbles'
-  | 'alexa'
   | 'backend_http'
   | 'dds'
   | 'webhook'
@@ -915,7 +914,7 @@ export interface AndreaPlatformIntelligenceRegressionResult {
 export async function emitAndreaPlatformDeliberation(input: {
   goal: string;
   taskFamily: PlatformTaskFamily;
-  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  channel?: 'telegram' | 'bluebubbles' | 'system';
   groupFolder?: string | null;
   correlationId?: string | null;
   approvalPosture?: string | null;
@@ -1023,7 +1022,7 @@ export async function emitAndreaPlatformDeliberation(input: {
 export async function emitAndreaPlatformProviderCouncil(input: {
   goal: string;
   taskFamily: PlatformTaskFamily;
-  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  channel?: 'telegram' | 'bluebubbles' | 'system';
   groupFolder?: string | null;
   correlationId?: string | null;
   requestedMode?: AndreaPlatformCouncilMode | null;
@@ -1525,7 +1524,7 @@ export async function emitAndreaPlatformDiagnosis(input: {
   goal: string;
   correlationId?: string | null;
   taskFamily?: PlatformTaskFamily;
-  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  channel?: 'telegram' | 'bluebubbles' | 'system';
   includePlatformSignals?: boolean;
   signals?: Array<Record<string, unknown>>;
   metadata?: Record<string, string>;
@@ -1653,7 +1652,7 @@ export async function emitAndreaPlatformRepairExecution(input: {
   repairPlanId: string;
   approvalId?: string | null;
   groupFolder?: string | null;
-  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  channel?: 'telegram' | 'bluebubbles' | 'system';
   actorId?: string | null;
   externalJobId?: string | null;
   externalLaneId?: string | null;

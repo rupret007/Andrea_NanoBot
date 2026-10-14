@@ -234,7 +234,8 @@ upsertRealityVerificationNeed({
   snapshotId: 'snap_test',
   createdAt: '2026-06-09T20:02:00.000Z',
   updatedAt: '2026-06-09T20:02:00.000Z',
-  question: 'What proof is needed for BlueBubbles same-thread message-action proof?',
+  question:
+    'What proof is needed for BlueBubbles same-thread message-action proof?',
   reason: 'BlueBubbles same-thread message-action proof is stale.',
   neededBeforeAction: true,
   possibleSourceTool: 'manual proof',
@@ -254,17 +255,6 @@ const approvedSendCanary = runActionPreflight({
   evidenceIds: ['approval:bluebubbles', 'canary:bluebubbles'],
 });
 assert.equal(approvedSendCanary.verdict, 'proceed');
-
-// Alexa cannot perform sends — fallback offered.
-const alexaSend = runActionPreflight({
-  actionSummary: 'send the message titled "on my way" to Candace',
-  actionType: 'message_send',
-  channel: 'alexa',
-  hasExplicitUserApproval: true,
-  approvedCapability: 'messages.send.bluebubbles',
-  evidenceIds: ['approval:voice'],
-});
-assert.equal(alexaSend.verdict, 'offer_fallback');
 
 // Never-allowed operations block outright.
 const never = runActionPreflight({

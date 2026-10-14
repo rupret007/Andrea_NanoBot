@@ -989,11 +989,7 @@ export function classifyResponseFeedbackCandidate(params: {
     .filter(Boolean)
     .join(' ');
 
-  if (
-    /manual sync|build model|mark-synced|developer console|interaction model/.test(
-      combined,
-    )
-  ) {
+  if (/manual sync/.test(combined)) {
     return {
       classification: 'manual_sync_only',
       status: 'manual_sync_only',

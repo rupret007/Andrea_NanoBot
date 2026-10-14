@@ -19,7 +19,6 @@ update the proof before demoing that lane.
 | Surface                                      | Current truth                  | Exact blocker                                                  | Owner              | Smallest next action                                                                  |
 | -------------------------------------------- | ------------------------------ | -------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
 | Telegram user-session proof                  | `near_live_only`               | last successful roundtrip is outside the freshness window      | operator/live turn | Run `npm run telegram:user:smoke` before a formal demo                                |
-| Alexa companion                              | `near_live_only` / proof-stale | signed handled `IntentRequest` is outside the freshness window | external/live turn | Use a real simulator/device turn, then run `npm run services:status`                  |
 | BlueBubbles companion                        | `degraded_but_usable`          | fresh canonical same-thread `message_action` proof missing     | operator/live turn | Run `npm run debug:bluebubbles -- --live`, then complete the same-thread proof chain  |
 | Google Calendar                              | `live_proven`                  | none                                                           | none               | Keep proof fresh with `npm run debug:google-calendar` when calendar writes are demoed |
 | Work cockpit                                 | `near_live_only` / proof-stale | backend lane may be disabled or no fresh work-cockpit turn     | operator/live turn | Re-run one `/cursor` sanity flow after enabling the intended backend lane             |
@@ -50,7 +49,7 @@ Confirm:
   the exact difference and do not claim SHA alignment
 - the active repo is canonical and the serving/workspace relationship is
   explicitly classified
-- `LAUNCH_CANDIDATE_STATUS` is not described as ready while Telegram, Alexa, or same-host flagship proof is missing
+- `LAUNCH_CANDIDATE_STATUS` is not described as ready while Telegram, or same-host flagship proof is missing
 - external blockers and proof freshness gaps are explicit instead of vague
 
 Important truth:
@@ -65,7 +64,6 @@ Important truth:
   currently overdue. `npm run telegram:user:smoke` sends a real `/ping` to the
   configured Telegram target and waits for the reply; run it only when that
   visible side effect is intended.
-- Alexa is not `live_proven` until a fresh signed handled `IntentRequest` is recorded.
 - BlueBubbles transport is ready, but current proof remains
   `degraded_but_usable` until the canonical same-thread message-action chain is
   fresh.
@@ -89,16 +87,12 @@ Close proof debt in this order:
    - Run `npm run debug:bluebubbles -- --live`.
    - In the same Messages chat, ask Andrea to draft a reply, then execute `send it` or `send it later tonight`.
    - Success shape: transport and webhook stay ready, and the same-thread inbound/outbound/message-action proof is fresh.
-4. Alexa
-   - From the real Alexa simulator or device, say `Open Andrea Assistant`, then `What am I forgetting?`.
-   - Run `npm run services:status` and `npm run debug:pilot`.
-   - Success shape: latest signed request is a handled `IntentRequest`, the proof is inside the freshness window, and Alexa reports `live_proven`.
-5. Flagship journeys
+4. Flagship journeys
    - Re-run ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, cross-channel handoff, knowledge library, and follow-through review.
    - Run `npm run debug:pilot`.
    - Success shape: flagship proof freshness improves without any stale `live_proven` claims.
 
-Treat missing credentials, manual signed turns, phone/device availability, and provider account limits as external blockers. Treat deterministic command failures, incorrect blocker classification, or mismatched docs as repo bugs.
+Treat missing credentials, phone/device availability, and provider account limits as external blockers. Treat deterministic command failures, incorrect blocker classification, or mismatched docs as repo bugs.
 
 ## Flagship Demo Flows
 
@@ -181,22 +175,6 @@ Treat missing credentials, manual signed turns, phone/device availability, and p
 - If an optional dependency is blocked:
   - the local runtime backend still supports the core cockpit story on this host
 
-### 7. Alexa orientation and follow-up
-
-- Best prompts:
-  - `What am I forgetting?`
-  - `Remind me to take my pills at 9`
-  - `What bills do I need to pay this week?`
-  - `Anything else?`
-  - `What about Candace?`
-  - `What should I remember tonight?`
-- Expected behavior:
-  - concise orientation plus one useful follow-up step
-- What makes it impressive:
-  - same assistant voice in a distinct spoken surface
-- If an optional dependency is blocked:
-  - if no fresh signed handled `IntentRequest` is recorded, run the live simulator/device proof before calling Alexa launch-ready
-
 ### 8. Cross-channel handoff
 
 - Best prompts:
@@ -244,14 +222,12 @@ Default showable story after proof recovery:
 4. Candace follow-through
 5. Mission / chief-of-staff planning
 6. Work cockpit continuity
-7. Alexa orientation if you want voice
 8. Cross-channel handoff
 9. Knowledge-library grounded answer
 10. Calendar add / remind / save distinction
 
 Optional lanes that should be described honestly:
 
-- Alexa is voice-ready only after a fresh signed handled `IntentRequest`.
 - BlueBubbles is usable but needs a fresh same-thread `message_action` proof before it should be called `live_proven`.
 - Research and image generation are advanced lanes. Their live status is command-derived, so demo them only when the latest readiness report says they are live-proven.
 
@@ -263,7 +239,6 @@ Optional lanes that should be described honestly:
 3. Confirm the launch story is still:
    - no stale `live_proven` claims
    - Telegram user-session proof unblocked only after credentials and smoke test
-   - Alexa `live_proven` only after a fresh signed handled `IntentRequest`
    - BlueBubbles `live_proven` only after a fresh same-thread `message_action` proof chain
    - proof-stale flagship journeys named plainly
 4. Re-run one short Telegram chain:
@@ -289,10 +264,6 @@ Optional lanes that should be described honestly:
   - set `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`
   - with approval for the visible live `/ping`, run
     `npm run telegram:user:smoke`
-- Alexa near-live only:
-  - run one real signed simulator/device flow: `Open Andrea Assistant`, then `What am I forgetting?`
-  - run `npm run services:status`
-  - if the model hash is no longer marked synced, import/build `docs/alexa/interaction-model.en-US.json`, then run `npm run setup -- --step alexa-model-sync mark-synced`
 - BlueBubbles proof gap:
   - run `npm run debug:bluebubbles -- --live`
   - retry the same Messages chat draft -> `send it` proof chain

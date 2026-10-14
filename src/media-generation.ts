@@ -35,9 +35,7 @@ function buildUnavailableResult(
     summaryText: replyText,
     replyText,
     routeExplanation:
-      request.channel === 'alexa'
-        ? 'I kept this voice-safe and stayed at the handoff layer.'
-        : 'I stayed on the shared media capability, but the live image provider is not ready here.',
+      'I stayed on the shared media capability, but the live image provider is not ready here.',
     debugPath,
   };
 }
@@ -62,25 +60,9 @@ export async function runImageGeneration(
     return buildUnavailableResult(
       request,
       status,
-      request.channel === 'alexa'
-        ? 'Tell me what image you want, and I can hand that off safely.'
-        : 'Tell me what image you want me to make first.',
+      'Tell me what image you want me to make first.',
       ['media.image_generate:empty_prompt'],
     );
-  }
-
-  if (request.channel === 'alexa') {
-    return {
-      handled: true,
-      providerStatus: status,
-      summaryText:
-        'I can handle image requests through Telegram, where I can actually send the result back.',
-      replyText:
-        'I can generate that, but I would send the image through Telegram rather than read it aloud here.',
-      routeExplanation:
-        'I kept this voice-safe by treating image generation as a request-and-deliver workflow.',
-      debugPath: ['media.image_generate:alexa_handoff_only'],
-    };
   }
 
   const config = resolveOpenAiProviderConfig();

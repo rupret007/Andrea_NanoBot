@@ -173,14 +173,12 @@ function dimensionForSyntheticScenario(scenarioId: string): AgiScoreDimension {
   if (/research|self_healing|degraded|fallback/i.test(scenarioId)) {
     return 'robustness';
   }
-  if (/messaging|household|alexa/i.test(scenarioId)) return 'taskCompletion';
+  if (/messaging|household/i.test(scenarioId)) return 'taskCompletion';
   return 'planning';
 }
 
 function isSyntheticRouteContractOnly(detail: string): boolean {
-  return /artifact_kind=(?:capability_route_metadata|alexa_route_metadata)\b/.test(
-    detail,
-  );
+  return /artifact_kind=capability_route_metadata\b/.test(detail);
 }
 
 function summarizeSuite(

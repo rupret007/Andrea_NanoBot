@@ -198,7 +198,6 @@ function domainForIntegration(id: string): WorldModelDomain {
   if (normalized.includes('calendar')) return 'google_calendar';
   if (normalized.includes('telegram')) return 'telegram';
   if (normalized.includes('bluebubbles')) return 'bluebubbles';
-  if (normalized.includes('alexa')) return 'alexa';
   if (normalized.includes('research')) return 'research';
   if (normalized.includes('image')) return 'image_generation';
   return 'agent_os';
@@ -507,9 +506,6 @@ function integrationCommand(status: IntegrationStatus): string {
   }
   if (status.integrationId === 'telegram') {
     return 'npm run telegram:user:smoke';
-  }
-  if (status.integrationId === 'alexa') {
-    return 'npm run debug:alexa-conversation -- --review';
   }
   return 'npm run integrations:status -- --json';
 }

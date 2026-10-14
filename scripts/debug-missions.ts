@@ -69,7 +69,7 @@ async function main(): Promise<void> {
   const proposed = await executeAssistantCapability({
     capabilityId: 'missions.propose',
     context: {
-      channel: 'alexa',
+      channel: 'bluebubbles',
       groupFolder,
       chatJid,
       now,
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   const handoff = await deliverCompanionHandoff(
     {
       groupFolder,
-      originChannel: 'alexa',
+      originChannel: 'bluebubbles',
       capabilityId: proposed.capabilityId,
       voiceSummary:
         proposed.continuationCandidate?.voiceSummary ||

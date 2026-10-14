@@ -83,33 +83,6 @@ async function main(): Promise<void> {
     },
   });
 
-  const alexaHousehold = await executeAssistantCapability({
-    capabilityId: 'household.candace_upcoming',
-    context: {
-      channel: 'alexa',
-      groupFolder,
-      now,
-    },
-    input: {
-      text: 'what about Candace',
-      canonicalText: 'what about Candace',
-      personName: 'Candace',
-    },
-  });
-
-  const alexaResearch = await executeAssistantCapability({
-    capabilityId: 'research.compare',
-    context: {
-      channel: 'alexa',
-      groupFolder,
-      now,
-    },
-    input: {
-      text: researchPrompt,
-      canonicalText: researchPrompt,
-    },
-  });
-
   const telegramResearch = await executeAssistantCapability({
     capabilityId: 'research.compare',
     context: {
@@ -138,18 +111,6 @@ async function main(): Promise<void> {
       canonicalText: 'tell me something interesting',
     },
   });
-  const alexaPulse = await executeAssistantCapability({
-    capabilityId: 'pulse.surprise_me',
-    context: {
-      channel: 'alexa',
-      groupFolder,
-      now,
-    },
-    input: {
-      text: 'Andrea Pulse',
-      canonicalText: 'Andrea Pulse',
-    },
-  });
 
   printBlock('TELEGRAM DAILY', [
     ...formatDebugExecutionPolicy(executionPolicy),
@@ -157,21 +118,6 @@ async function main(): Promise<void> {
     `reply: ${telegramLooseEnds.replyText || 'none'}`,
     `source: ${telegramLooseEnds.trace?.responseSource || 'none'}`,
     `shape: ${telegramLooseEnds.outputShape || 'none'}`,
-  ]);
-
-  printBlock('ALEXA HOUSEHOLD', [
-    `handled: ${alexaHousehold.handled}`,
-    `reply: ${alexaHousehold.replyText || 'none'}`,
-    `source: ${alexaHousehold.trace?.responseSource || 'none'}`,
-    `shape: ${alexaHousehold.outputShape || 'none'}`,
-  ]);
-
-  printBlock('ALEXA RESEARCH', [
-    `handled: ${alexaResearch.handled}`,
-    `provider: ${alexaResearch.researchResult?.providerUsed || 'none'}`,
-    `reply: ${alexaResearch.replyText || 'none'}`,
-    `handoff: ${alexaResearch.handoffOffer || 'none'}`,
-    `shape: ${alexaResearch.outputShape || 'none'}`,
   ]);
 
   printBlock('TELEGRAM RESEARCH', [
@@ -182,13 +128,6 @@ async function main(): Promise<void> {
     `shape: ${telegramResearch.outputShape || 'none'}`,
   ]);
 
-  printBlock('ALEXA PULSE', [
-    `handled: ${alexaPulse.handled}`,
-    `reply: ${alexaPulse.replyText || 'none'}`,
-    `source: ${alexaPulse.trace?.responseSource || 'none'}`,
-    `shape: ${alexaPulse.outputShape || 'none'}`,
-  ]);
-
   printBlock('BLUEBUBBLES PULSE', [
     `handled: ${bluebubblesPulse.handled}`,
     `reply: ${bluebubblesPulse.replyText || 'none'}`,
@@ -197,11 +136,6 @@ async function main(): Promise<void> {
   ]);
 
   printBlock('SAFETY GATE', [
-    `work.current_logs allowed on Alexa: ${
-      workLogsCapability
-        ? isAssistantCapabilityAllowed(workLogsCapability, 'alexa')
-        : 'unknown'
-    }`,
     `work.current_logs allowed on Telegram: ${
       workLogsCapability
         ? isAssistantCapabilityAllowed(workLogsCapability, 'telegram')

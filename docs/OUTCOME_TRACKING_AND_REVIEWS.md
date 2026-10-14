@@ -117,7 +117,7 @@ Andrea can build a grounded review snapshot that includes:
 
 The goal is specific closure truth, not motivational fluff.
 
-## Telegram Versus Alexa
+## Channel Behavior
 
 ### Telegram
 
@@ -143,25 +143,6 @@ Telegram can also show bounded controls for the top surfaced items:
 - `Remind tomorrow`
 - `Hide from review`
 - `Show thread/plan again`
-
-### Alexa
-
-Alexa stays brief and orienting.
-
-It should answer prompts like:
-
-- `what actually got done today`
-- `what slipped`
-- `what should I follow up on tomorrow`
-- `what's still open with Candace`
-
-Alexa should mention:
-
-- one main completion or carryover
-- one main blocker or slip when present
-- one next-step hint if useful
-
-When the review is too dense, Alexa should hand off to Telegram instead of reading a long list.
 
 ### BlueBubbles
 
@@ -244,7 +225,7 @@ of independently rewriting legacy status or next-action fields. See
 For repo-side validation, run:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/alexa.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/delegation-rules.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/delegation-rules.test.ts
 npm run typecheck
 npm run build
 npm run test
@@ -260,12 +241,6 @@ For a practical review proof, use a flow like:
 5. confirm sent, scheduled, failed, and unsent states appear distinctly
 6. use `Remind tomorrow`, `Mark handled`, or `Hide from review`
 7. ask `what changed after I approved something` or `what got done today`
-
-For Alexa, use:
-
-1. `what actually got done today`
-2. `what's still open with Candace`
-3. `remind me tomorrow instead`
 
 ## Intentionally Out Of Scope
 

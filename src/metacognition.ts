@@ -658,10 +658,10 @@ function selectMode(input: {
       : 'plan_stepwise';
   }
   if (isReadOnlyCalendarAsk(text)) {
-    return input.channel === 'alexa' ? 'fast_direct' : 'retrieve_grounded';
+    return 'retrieve_grounded';
   }
   if (isStatusVerificationAsk(text)) return 'verify_then_act';
-  if (input.channel === 'alexa' && hasHighRisk) return 'defer_or_handoff';
+
   if (
     input.reality.proofDebt.total > 0 &&
     /status|proof|working|ready/i.test(text)

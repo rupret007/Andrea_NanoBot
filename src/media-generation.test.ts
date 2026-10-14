@@ -56,16 +56,6 @@ describe('media generation', () => {
     expect(result.artifact).toBeUndefined();
   });
 
-  it('keeps Alexa image requests at the handoff layer', async () => {
-    const result = await runImageGeneration({
-      prompt: 'a watercolor lake at sunrise',
-      channel: 'alexa',
-    });
-
-    expect(result.replyText).toContain('Telegram');
-    expect(result.routeExplanation).toContain('voice-safe');
-  });
-
   it('returns a Telegram-deliverable image artifact when the provider responds', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.OPENAI_BASE_URL = 'https://example.test/v1';

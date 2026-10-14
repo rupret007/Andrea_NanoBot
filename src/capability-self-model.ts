@@ -1,3 +1,4 @@
+import { listCurrentToolReliabilityRollups } from './tool-reliability.js';
 import {
   getAllTasks,
   isDatabaseInitialized,
@@ -5,7 +6,6 @@ import {
   listCapabilityStates,
   listProofClosureSteps,
   listReliabilityObservations,
-  listToolReliabilityRollups,
   upsertCapabilityState,
 } from './db.js';
 import { readEnvFile } from './env.js';
@@ -69,13 +69,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     displayName: 'Draft messages and replies',
     focusTier: 'daily_core',
     requiredConfig: [],
-    allowedChannels: [
-      'telegram',
-      'bluebubbles',
-      'alexa',
-      'operator',
-      'internal',
-    ],
+    allowedChannels: ['telegram', 'bluebubbles', 'operator', 'internal'],
     approvalRequirement: 'none',
     autonomyLevel: 1,
   },
@@ -124,13 +118,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     requiredConfig: ['GOOGLE_CALENDAR_CLIENT_ID'],
     reliabilitySubjectId: 'integration:google_calendar',
     proofNameHint: /google calendar|calendar.*(read|write|create|auth)/i,
-    allowedChannels: [
-      'telegram',
-      'alexa',
-      'bluebubbles',
-      'operator',
-      'internal',
-    ],
+    allowedChannels: ['telegram', 'bluebubbles', 'operator', 'internal'],
     approvalRequirement: 'none',
     autonomyLevel: 0,
   },
@@ -148,17 +136,6 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     autonomyLevel: 5,
   },
   {
-    capabilityId: 'voice.alexa',
-    displayName: 'Alexa voice conversations',
-    focusTier: 'optional_surface',
-    requiredConfig: ['ALEXA_SKILL_ID'],
-    reliabilitySubjectId: 'integration:alexa',
-    proofNameHint: /alexa.*(intent|signed)/i,
-    allowedChannels: ['alexa'],
-    approvalRequirement: 'none',
-    autonomyLevel: 0,
-  },
-  {
     capabilityId: 'research.web',
     runtimeCapabilityId: 'research.web',
     displayName: 'Web research',
@@ -166,7 +143,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     requiredConfig: [],
     requiredConfigAnyOf: [['BRAVE_API_KEY', 'BRAVE_SEARCH_API_KEY']],
     reliabilitySubjectId: 'provider:brave_search',
-    allowedChannels: ['alexa', 'telegram'],
+    allowedChannels: ['telegram'],
     approvalRequirement: 'none',
     autonomyLevel: 0,
   },
@@ -177,13 +154,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     focusTier: 'daily_core',
     requiredConfig: [],
     reliabilitySubjectId: 'tool:reminders',
-    allowedChannels: [
-      'telegram',
-      'alexa',
-      'bluebubbles',
-      'operator',
-      'internal',
-    ],
+    allowedChannels: ['telegram', 'bluebubbles', 'operator', 'internal'],
     approvalRequirement: 'none',
     autonomyLevel: 3,
   },
@@ -352,7 +323,9 @@ export function buildCapabilitySelfModel(
 ): CapabilitySelfModelReport {
   const generatedAt = nowIso(params.now);
   const dbReady = isDatabaseInitialized();
-  const rollups = dbReady ? listToolReliabilityRollups({ limit: 100 }) : [];
+  const rollups = dbReady
+    ? listCurrentToolReliabilityRollups({ limit: 100 })
+    : [];
   const proofSteps = dbReady ? listProofClosureSteps({ limit: 100 }) : [];
   const scheduledTasks = dbReady ? getAllTasks() : [];
   const requiredConfigNames = Array.from(

@@ -31,7 +31,6 @@ const OPERATOR_ACTION_PATTERNS = [
   /\bgit\b/i,
   /\bcursor\b/i,
   /\bruntime\b/i,
-  /\balexa.*admin\b/i,
   /\boperator\b/i,
 ];
 

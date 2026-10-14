@@ -26,7 +26,7 @@ export interface SetupDogfoodAnswerSet {
 
 export interface SetupDogfoodInput {
   groupFolder: string;
-  channel?: 'telegram' | 'bluebubbles' | 'alexa';
+  channel?: 'telegram' | 'bluebubbles';
   chatJid?: string;
   now?: Date;
   answers?: Partial<SetupDogfoodAnswerSet>;

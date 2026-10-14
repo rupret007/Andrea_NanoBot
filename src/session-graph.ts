@@ -1644,7 +1644,7 @@ function continuityActionPriority(
   };
   let priority = Math.max(suggestion.priority, baseByKind[kind]);
   if (/bluebubbles|imessage|messages bridge/.test(text)) priority += 0.16;
-  if (/alexa/.test(text)) priority += 0.12;
+
   if (/telegram/.test(text)) priority += 0.08;
   if (/google calendar|calendar/.test(text)) priority += 0.04;
   if (

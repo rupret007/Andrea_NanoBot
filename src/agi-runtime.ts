@@ -1,7 +1,7 @@
 /**
  * AGI runtime — the composition root that wires the new subsystems
  * together and exposes a single `ask(question)` entry point the existing
- * NanoClaw channels (WhatsApp, Telegram, Slack, Discord, Gmail, Alexa,
+ * NanoClaw channels (WhatsApp, Telegram, Slack, Discord, Gmail,
  * BlueBubbles) can call without knowing anything about the cognitive
  * machinery underneath.
  *

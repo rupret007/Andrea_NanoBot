@@ -130,7 +130,7 @@ function taskFamilyFor(
   if (/bluebubbles|message|thread|reply|send/.test(text))
     return 'communication';
   if (/research|search|source|web/.test(text)) return 'research';
-  if (/provider|runtime|service|proof|alexa|telegram|operator/.test(text)) {
+  if (/provider|runtime|service|proof|telegram|operator/.test(text)) {
     return 'operator';
   }
   return 'assistant';

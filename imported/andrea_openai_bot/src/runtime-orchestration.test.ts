@@ -94,7 +94,7 @@ function buildHarness(
 
   const deps: RuntimeOrchestrationServiceDependencies = {
     assistantName: 'Andrea',
-    enqueueJob(groupJid, jobId, fn) {
+    enqueueJob(_groupJid, jobId, fn) {
       queuedTasks.set(jobId, fn);
     },
     getAvailableGroups() {
@@ -183,7 +183,7 @@ describe('runtime orchestration service', () => {
 
     const logFile = 'C:\\logs\\runtime-job.log';
     const harness = buildHarness({
-      runContainerAgent: vi.fn(async (_group, input, _onProcess, onOutput) => {
+      runContainerAgent: vi.fn(async (_group, _input, _onProcess, onOutput) => {
         markRunning?.();
         await onOutput?.({
           status: 'success' as const,

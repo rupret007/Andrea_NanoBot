@@ -65,7 +65,7 @@ export interface DogfoodScorecard {
 export interface DogfoodScenarioResult {
   scenarioId: string;
   prompt: string;
-  channel: 'operator' | 'telegram' | 'bluebubbles' | 'alexa';
+  channel: 'operator' | 'telegram' | 'bluebubbles';
   route: string;
   status: DogfoodGauntletStatus;
   completionStatus: DogfoodCompletionStatus;
@@ -96,7 +96,6 @@ export interface DogfoodGauntletReport {
   consistency: {
     braveSearchHealthy: boolean;
     telegramUserSessionMissingConfig: boolean;
-    alexaSignedProofPending: boolean;
     blueBubblesTransportReadyButSameThreadProofIncomplete: boolean;
     repoWorkRequiredZero: boolean;
   };
@@ -643,11 +642,7 @@ function recordPilotOutcome(input: {
   const started = startPilotJourney({
     journeyId: input.scenario.journeyId,
     channel:
-      input.scenario.channel === 'alexa'
-        ? 'alexa'
-        : input.scenario.channel === 'bluebubbles'
-          ? 'bluebubbles'
-          : 'telegram',
+      input.scenario.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
     groupFolder: 'dogfood-live',
     routeKey: `dogfood:${input.scenario.scenarioId}:${input.scenario.route}`,
     systemsInvolved: input.scenario.systems,
@@ -701,7 +696,6 @@ function consistencyFor(
   realityReport: RealityDoctorReport,
 ): DogfoodGauntletReport['consistency'] {
   const telegram = proofByName(proofReport, 'telegram user');
-  const alexa = proofByName(proofReport, 'alexa');
   const bluebubbles = proofByName(proofReport, 'bluebubbles');
   const braveHealthy = realityReport.beliefs.some(
     (belief) =>
@@ -712,8 +706,6 @@ function consistencyFor(
   return {
     braveSearchHealthy: braveHealthy,
     telegramUserSessionMissingConfig: telegram?.status === 'missing_config',
-    alexaSignedProofPending:
-      alexa?.status === 'externally_blocked' || alexa?.status === 'stale',
     blueBubblesTransportReadyButSameThreadProofIncomplete:
       bluebubbles?.status === 'near_live_only' ||
       bluebubbles?.status === 'stale',
@@ -808,7 +800,6 @@ export function formatDogfoodGauntletReport(
     '*Consistency*',
     `- Brave/Search healthy: ${report.consistency.braveSearchHealthy ? 'yes' : 'no'}`,
     `- Telegram user-session missing config: ${report.consistency.telegramUserSessionMissingConfig ? 'yes' : 'no'}`,
-    `- Alexa signed proof pending: ${report.consistency.alexaSignedProofPending ? 'yes' : 'no'}`,
     `- BlueBubbles transport-ready but proof incomplete: ${report.consistency.blueBubblesTransportReadyButSameThreadProofIncomplete ? 'yes' : 'no'}`,
     `- Repo work required zero: ${report.consistency.repoWorkRequiredZero ? 'yes' : 'no'}`,
     '',

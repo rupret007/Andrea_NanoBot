@@ -1,8 +1,7 @@
 import { Buffer } from 'buffer';
 
-import { completeAssistantActionFromAlexa } from '../src/assistant-action-completion.js';
+import { completeAssistantAction } from '../src/assistant-action-completion.js';
 import { executeAssistantCapability } from '../src/assistant-capabilities.js';
-import { seedConfiguredAlexaLinkedAccount } from '../src/alexa-identity.js';
 import {
   getCompanionHandoff,
   getTaskById,
@@ -37,13 +36,6 @@ async function main(): Promise<void> {
     added_at: '2026-04-05T09:00:00.000Z',
     requiresTrigger: false,
     isMain: true,
-  });
-  seedConfiguredAlexaLinkedAccount({
-    ALEXA_LINKED_ACCOUNT_TOKEN: 'handoff-debug-token',
-    ALEXA_LINKED_ACCOUNT_NAME: 'Andrea Handoff Debug',
-    ALEXA_LINKED_ACCOUNT_GROUP_FOLDER: groupFolder,
-    ALEXA_LINKED_ACCOUNT_ALLOWED_USER_ID: 'amzn1.ask.account.debug',
-    ALEXA_LINKED_ACCOUNT_ALLOWED_PERSON_ID: 'amzn1.ask.person.debug',
   });
 
   saveKnowledgeSource({
@@ -118,8 +110,9 @@ async function main(): Promise<void> {
     followupSuggestions: ['Save it if useful.'],
   };
 
-  const researchHandoff = await completeAssistantActionFromAlexa(
+  const researchHandoff = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder,
       action: 'send_details',
       utterance: 'send me the details',
@@ -136,7 +129,7 @@ async function main(): Promise<void> {
   const knowledgeAnswer = await executeAssistantCapability({
     capabilityId: 'knowledge.summarize_saved',
     context: {
-      channel: 'alexa',
+      channel: 'bluebubbles',
       groupFolder,
       now: new Date('2026-04-05T09:12:00.000Z'),
     },
@@ -144,8 +137,9 @@ async function main(): Promise<void> {
       canonicalText: 'What do my saved notes say about Candace dinner timing?',
     },
   });
-  const knowledgeHandoff = await completeAssistantActionFromAlexa(
+  const knowledgeHandoff = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder,
       action: 'send_details',
       utterance: 'send the full version to Telegram',
@@ -189,8 +183,9 @@ async function main(): Promise<void> {
     },
     followupSuggestions: ['Save it to your library if useful.'],
   };
-  const mediaHandoff = await completeAssistantActionFromAlexa(
+  const mediaHandoff = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder,
       action: 'send_details',
       utterance: 'yes',
@@ -204,8 +199,9 @@ async function main(): Promise<void> {
     handoffDeps,
   );
 
-  const librarySave = await completeAssistantActionFromAlexa(
+  const librarySave = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder,
       action: 'save_to_library',
       utterance: 'save that in my library',
@@ -219,8 +215,9 @@ async function main(): Promise<void> {
     handoffDeps,
   );
 
-  const reminderSave = await completeAssistantActionFromAlexa(
+  const reminderSave = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder,
       action: 'create_reminder',
       utterance: 'turn that into a reminder tonight',

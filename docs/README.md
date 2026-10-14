@@ -47,9 +47,8 @@ The latest dated host snapshot records:
   `2026-07-14T15:10:07.618Z` is aged and needs a genuine user-path refresh
 - BlueBubbles transport is reachable, while a same-thread action proof can age
   independently and must remain explicit in the dated status
-- **manual live proof still pending**: Alexa needs a fresh signed handled
-  custom-skill `IntentRequest`; any aged Telegram, BlueBubbles, or life-thread
-  proof must remain operator debt rather than repository failure
+- **manual live proof still pending**: any aged Telegram, BlueBubbles, or
+  life-thread proof remains operator debt rather than a repository failure
 - Google Calendar is live-proven; configured provider entries are not live
   health claims unless a current probe or verified-use record says so
 - flagship journey proofs can age out separately from integration health
@@ -57,9 +56,6 @@ The latest dated host snapshot records:
   proof is stale
 
 Retired wording such as “BlueBubbles optional Messages bridge with a fresh canonical same-thread `message_action` proof” describes an aged-out historical result and must not be used as the current host claim.
-
-After any Alexa interaction-model change, import/build in the Developer Console
-and run `npm run setup -- --step alexa-model-sync mark-synced`.
 
 When operator surfaces disagree, the release truth should come from:
 
@@ -83,7 +79,6 @@ Andrea has two different documentation audiences on purpose:
   - setup, environment variables, startup/restart/verify
   - Cursor Cloud job workflows
   - desktop bridge terminal/session workflows
-  - Alexa Companion Mode setup and live validation
   - troubleshooting, validation, and release gates
 
 Cursor-specific docs also split into three surfaces:
@@ -96,7 +91,7 @@ Cursor-specific docs also split into three surfaces:
 
 Andrea's current flagship journeys are:
 
-- Alexa or Telegram schedule check -> reminder, move, or richer follow-through
+- Telegram schedule check -> reminder, move, or richer follow-through
 - `What's on my calendar tomorrow?` -> short read -> add, move, or reminder
 - `Help me set this up` -> proposed Andrea setup -> approved lists and routines
 - `Add milk to my shopping list` -> zero-setup capture -> grouped list readout -> done, defer, remind, move, or plan follow-up
@@ -146,7 +141,6 @@ Use these when you are enabling or validating specific capabilities:
 | Verified production apprenticeship     | [VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md)             |
 | Cursor Cloud API keys                  | [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md)                                                   |
 | Cursor desktop machine access          | [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md)                                       |
-| Alexa Companion Mode                   | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                                   |
 | Amazon shopping + approvals            | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)                       |
 | Optional add-ons and skills            | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md)                               |
 
@@ -173,7 +167,7 @@ For the productized flagship-flow view specifically:
 - draft -> approve -> send -> review: [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md)
 - closure and carryover review: [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)
 - research -> saveable output: [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)
-- cross-surface continuity: [CROSS_CHANNEL_HANDOFFS.md](CROSS_CHANNEL_HANDOFFS.md) + [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
+- cross-surface continuity: [CROSS_CHANNEL_HANDOFFS.md](CROSS_CHANNEL_HANDOFFS.md)
 
 For the default live demo, stay on Telegram conversation + direct replies + reminders/tasks + `/help` + `/cursor_status` unless you validated optional integrations that same day.
 
@@ -181,8 +175,6 @@ Current host-proof rule:
 
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys are status-led and should be refreshed with `npm run debug:pilot` before demos
-- Alexa is status-led on this host: it is currently manual-action proof debt until a fresh signed handled custom-skill turn is recorded
-- after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - BlueBubbles is status-led on this host: transport is ready, but current proof
   is `degraded_but_usable`/`needs_proof` until the configured canonical
   self-thread records a fresh `message_action` chain
@@ -201,11 +193,10 @@ npm run debug:pilot
 That operator-only view shows:
 
 - current pilot-readiness proof by surface
-- the 7 flagship journey proof states
+- the 6 flagship journey proof states
 - proof freshness and 24h / 7d usage by flagship journey
 - recent flagged outcomes, including degraded-but-usable fallback
 - open private pilot issues
-- grouped Alexa utterance-review patterns through the Alexa router when those review signals exist
 
 Private pilot issue capture is explicit and local-only. During dogfooding, you can say:
 
@@ -221,11 +212,6 @@ Important limits:
 - raw transcripts are not stored in pilot instrumentation
 - set `ANDREA_PILOT_LOGGING_ENABLED=0` if you need to disable journey logging and explicit pilot issue capture on a host
 
-For Alexa-specific router tuning, also use:
-
-- `npm run debug:alexa-conversation`
-- `npm run debug:alexa-conversation -- --review`
-
 ## Operations, Security, And Release
 
 Use these during incidents, audits, or release preparation:
@@ -238,7 +224,7 @@ Use these during incidents, audits, or release preparation:
 | Release test gate        | [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md) |
 | Public privacy policy    | [../PRIVACY.md](../PRIVACY.md)                                   |
 
-Current Andrea operator truth lives in the README, admin guide, setup guide, and Alexa guide. `REQUIREMENTS.md` remains useful background, but it is historical NanoClaw design reference rather than the day-to-day operations source of truth.
+Current Andrea operator truth lives in the README, admin guide, setup guide, and channel guide. `REQUIREMENTS.md` remains useful background, but it is historical NanoClaw design reference rather than the day-to-day operations source of truth.
 
 ## Runtime Internals
 
@@ -252,7 +238,7 @@ Only read these when changing core runtime behavior:
 | [APPLE-CONTAINER-NETWORKING.md](APPLE-CONTAINER-NETWORKING.md) | Historical Apple Container network notes; agent execution is currently fail-closed |
 | [docker-sandboxes.md](docker-sandboxes.md)                     | Retired Docker Sandbox guide and the supported container-validation path           |
 
-`SPEC.md` is a historical runtime reference. When it disagrees with current operator docs or live host behavior, follow the current README, admin guide, setup guide, and Alexa guide.
+`SPEC.md` is a historical runtime reference. When it disagrees with current operator docs or live host behavior, follow the current README, admin guide, setup guide, and channel guide.
 
 ## Intelligence Design And Evidence
 
