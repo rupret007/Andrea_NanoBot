@@ -25,6 +25,14 @@ addresses are denied at both preparation and confirmation; groups are draft-only
 Expiry and confirmation freshness are checked again after recipient lookup and
 immediately before dispatch, so a slow verification cannot extend consent.
 
+Within the same owner session, conversation and process epoch, a higher revision
+of the same draft ID creates a fresh challenge and supersedes the older pending
+card. Equal or lower revisions are rejected, including after cancellation or
+consumption. Revisions cannot transfer an old challenge to edited content.
+The 10,000-draft limit counts only pending decisions; elapsed drafts are expired
+before enforcing it. Terminal records remain available for replay protection
+and receipt inspection without exhausting pending capacity.
+
 SQLite FULL synchronous persistence consumes the challenge before dispatch.
 Andrea's existing message-action claim, owner-pause fence, provider idempotency
 and durable receipt machinery then handle delivery. A host-only capability

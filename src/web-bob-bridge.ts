@@ -25,12 +25,7 @@ const TTL = 5 * 60_000;
 const ISSUER = 'web-bob';
 const AUDIENCE = 'andrea';
 const PREFIX = '/web-bob/v1/';
-const LOOPBACK_ADDRESSES = new Set([
-  '127.0.0.1',
-  '::1',
-  ':ffff:127.0.0.1',
-  '::ffff:127.0.0.1',
-]);
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export function isWebBobLoopbackAddress(address: string | undefined): boolean {
@@ -224,6 +219,16 @@ export class WebBobBridge {
     this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_delivery (
       draftId TEXT PRIMARY KEY, evidence TEXT NOT NULL
     )`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS webbob_drafts_revision
+      ON webbob_drafts (
+        json_extract(scope, '$.actor'),
+        json_extract(scope, '$.conversationId'),
+        json_extract(scope, '$.epoch'),
+        json_extract(scope, '$.draftId'),
+        json_extract(scope, '$.revision')
+      )`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS webbob_drafts_pending
+      ON webbob_drafts (state, expires)`);
     // Restart cannot revive a pending owner decision. Consumed records survive.
     this.db
       .prepare(
@@ -294,23 +299,55 @@ export class WebBobBridge {
         scope.conversationId,
         scope.epoch,
         scope.draftId,
+        scope.revision,
       ]),
     );
     const challenge = 'wbtxt-' + randomBytes(16).toString('hex');
     const action = this.db
       .transaction(() => {
         requireValue(
-          !this.db.prepare('SELECT id FROM webbob_drafts WHERE id = ?').get(id),
+          !this.db
+            .prepare(
+              `SELECT id FROM webbob_drafts
+               WHERE json_extract(scope, '$.actor') = ?
+                 AND json_extract(scope, '$.conversationId') = ?
+                 AND json_extract(scope, '$.epoch') = ?
+                 AND json_extract(scope, '$.draftId') = ?
+                 AND json_extract(scope, '$.revision') >= ? LIMIT 1`,
+            )
+            .get(
+              scope.actor,
+              scope.conversationId,
+              scope.epoch,
+              scope.draftId,
+              scope.revision,
+            ),
           409,
-          'This draft request already exists; review a fresh draft.',
+          'This draft revision already exists or is stale; review a fresh draft.',
         );
+        // Retain terminal rows for replay protection and receipt inspection,
+        // but only active decisions consume capacity. Replace under the same
+        // write lock so an old challenge cannot race the new revision.
+        this.db
+          .prepare(
+            "UPDATE webbob_drafts SET state = 'expired' WHERE state = 'pending' AND expires <= ?",
+          )
+          .run(now);
+        this.db
+          .prepare(
+            `UPDATE webbob_drafts SET state = 'superseded'
+             WHERE state = 'pending' AND json_extract(scope, '$.conversationId') = ?`,
+          )
+          .run(scope.conversationId);
         const count = this.db
-          .prepare('SELECT count(*) AS n FROM webbob_drafts')
+          .prepare(
+            "SELECT count(*) AS n FROM webbob_drafts WHERE state = 'pending'",
+          )
           .get() as { n: number };
         requireValue(
           count.n < 10000,
           503,
-          'Web Bob bridge history limit reached.',
+          'Web Bob bridge pending draft limit reached.',
         );
         const action = createOrRefreshMessageActionFromDraft({
           groupFolder: 'webbob',
@@ -329,21 +366,6 @@ export class WebBobBridge {
             isGroup: false,
           },
         });
-        // A new draft supersedes every older pending card in this conversation.
-        const pending = this.db
-          .prepare(
-            "SELECT id, scope FROM webbob_drafts WHERE state = 'pending'",
-          )
-          .all() as { id: string; scope: string }[];
-        for (const row of pending) {
-          const other = JSON.parse(row.scope) as Scope;
-          if (other.conversationId === scope.conversationId)
-            this.db
-              .prepare(
-                "UPDATE webbob_drafts SET state = 'superseded' WHERE id = ?",
-              )
-              .run(row.id);
-        }
         this.db
           .prepare(
             'INSERT INTO webbob_drafts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)',

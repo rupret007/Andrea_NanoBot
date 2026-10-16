@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -60,6 +61,24 @@ describe('Web Bob dedicated Andrea ingress', () => {
       confirmationRequestId: 'confirm-123',
       approvedAt: Date.now(),
     };
+  };
+  const seedHistory = async (state: string, expires: number, count = 10000) => {
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      db.prepare(
+        `WITH RECURSIVE entries(n) AS (
+          VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < ?
+        )
+        INSERT INTO webbob_drafts
+        SELECT CAST(n AS TEXT), json_set(?, '$.conversationId', 'history-' || n),
+          '', '', '', ?, 0, ?, '', NULL
+        FROM entries`,
+      ).run(count, JSON.stringify(draft()), expires, state);
+    } finally {
+      db.close();
+    }
   };
   beforeEach(() => {
     _initTestDatabase();
@@ -283,25 +302,276 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('does not create a core action when draft history is already full', async () => {
+  it('supersedes the same draft ID with a higher revision and requires its new challenge', async () => {
+    const first = await approval();
+    const revised = await approval({
+      ...draft(),
+      revision: 2,
+      draftRequestId: 'request-456',
+      text: 'Revised exact owner text.',
+    });
+    expect(revised.bridgeDraftId).not.toBe(first.bridgeDraftId);
+    expect(revised.confirmation).not.toBe(first.confirmation);
+    const oldStatus = await bridge.status(first);
+    const newStatus = await bridge.status(revised);
+    expect(oldStatus.state).toBe('superseded');
+    expect(newStatus.state).toBe('pending');
+    expect(newStatus.actionId).not.toBe(oldStatus.actionId);
+    await expect(bridge.confirm(first)).rejects.toMatchObject({ status: 409 });
+    await expect(
+      bridge.confirm({ ...revised, confirmation: first.confirmation }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(send).not.toHaveBeenCalled();
+    expect((await bridge.confirm(revised)).state).toBe('sent');
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0].slice(0, 3)).toEqual([
+      'bluebubbles',
+      'bb:' + revised.chatGuid,
+      revised.text,
+    ]);
+    await expect(bridge.confirm(first)).rejects.toMatchObject({ status: 409 });
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('rejects duplicate, equal and lower revisions without revoking the latest pending card', async () => {
+    const currentDraft = { ...draft(), revision: 3 };
+    const current = await approval(currentDraft);
+    await expect(bridge.prepare(currentDraft)).rejects.toMatchObject({
+      status: 409,
+    });
+    for (const revision of [3, 2, 1]) {
+      await expect(
+        bridge.prepare({
+          ...currentDraft,
+          revision,
+          draftRequestId: 'request-stale-' + revision,
+          text: 'Rejected replacement text.',
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect((await bridge.status(current)).state).toBe('pending');
+    }
+    expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
+      1,
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect((await bridge.confirm(current)).state).toBe('sent');
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a lower revision whose recipient lookup completes after a newer revision', async () => {
+    let finish!: (addresses: string[]) => void;
+    resolve.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const delayed = bridge.prepare({ ...draft(), revision: 2 });
+    const rejected = expect(delayed).rejects.toMatchObject({ status: 409 });
+    const current = await approval({ ...draft(), revision: 3 });
+    finish(['+12025550102']);
+    await rejected;
+    expect((await bridge.status(current)).state).toBe('pending');
+    expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
+      1,
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('revokes confirmation when a higher revision arrives during recipient lookup', async () => {
+    const first = await approval();
+    let revised!: Awaited<ReturnType<typeof approval>>;
+    resolve.mockImplementationOnce(async () => {
+      revised = await approval({ ...draft(), revision: 2 });
+      return ['+12025550102'];
+    });
+    await expect(bridge.confirm(first)).rejects.toMatchObject({ status: 409 });
+    expect((await bridge.status(first)).state).toBe('superseded');
+    expect((await bridge.status(revised)).state).toBe('pending');
+    expect(send).not.toHaveBeenCalled();
+    expect((await bridge.confirm(revised)).state).toBe('sent');
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('keeps revision ordering and supersession separate across conversations', async () => {
+    const first = await approval({ ...draft(), revision: 3 });
+    const independent = await approval({
+      ...draft(),
+      conversationId: 'conversation-456',
+    });
+    const revised = await approval({ ...draft(), revision: 4 });
+    expect((await bridge.status(first)).state).toBe('superseded');
+    expect((await bridge.status(revised)).state).toBe('pending');
+    expect((await bridge.status(independent)).state).toBe('pending');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does not revive cancelled revisions through equal or lower preparations', async () => {
+    const current = await approval({ ...draft(), revision: 3 });
+    bridge.cancel(current);
+    for (const revision of [3, 2]) {
+      await expect(
+        bridge.prepare({ ...draft(), revision }),
+      ).rejects.toMatchObject({ status: 409 });
+    }
+    expect((await bridge.status(current)).state).toBe('cancelled');
+    expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
+      1,
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('preserves revision replay protection for legacy persisted draft IDs after upgrade', async () => {
+    const input = await approval({ ...draft(), revision: 3 });
+    const legacyId = createHash('sha256')
+      .update(
+        JSON.stringify([
+          input.actor,
+          input.conversationId,
+          input.epoch,
+          input.draftId,
+        ]),
+      )
+      .digest('hex');
+    bridge.close();
     const db = new (await import('better-sqlite3')).default(
       path.join(folder, 'bridge.db'),
     );
     try {
-      db.exec(`
-        WITH RECURSIVE entries(n) AS (
-          VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < 10000
-        )
-        INSERT INTO webbob_drafts
-        SELECT CAST(n AS TEXT), '', '', '', '', 0, 0, 'expired', '', NULL
-        FROM entries
-      `);
-      await expect(bridge.prepare(draft())).rejects.toThrow('history limit');
-      expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toEqual([]);
+      db.exec(`DROP INDEX webbob_drafts_revision;
+        DROP INDEX webbob_drafts_pending;`);
+      db.prepare('UPDATE webbob_drafts SET id = ? WHERE id = ?').run(
+        legacyId,
+        input.bridgeDraftId,
+      );
+    } finally {
+      db.close();
+    }
+    bridge = open();
+    const legacy = { ...input, bridgeDraftId: legacyId };
+    expect((await bridge.status(legacy)).state).toBe('expired');
+    await expect(bridge.confirm(legacy)).rejects.toMatchObject({ status: 409 });
+    for (const revision of [3, 2]) {
+      await expect(
+        bridge.prepare({ ...draft(), revision }),
+      ).rejects.toMatchObject({ status: 409 });
+    }
+    const revised = await approval({ ...draft(), revision: 4 });
+    expect((await bridge.status(revised)).state).toBe('pending');
+    expect((await bridge.status(legacy)).state).toBe('expired');
+    await expect(bridge.confirm(legacy)).rejects.toMatchObject({ status: 409 });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('preserves a consumed revision receipt when a higher revision is prepared and confirmed', async () => {
+    const first = await approval();
+    const originalReceipt = await bridge.confirm(first);
+    expect(originalReceipt).toMatchObject({
+      state: 'sent',
+      messageGuid: 'receipt-123',
+    });
+    const revised = await approval({
+      ...draft(),
+      revision: 2,
+      draftRequestId: 'request-456',
+      text: 'A separate revised owner message.',
+    });
+    const originalIdentity = {
+      state: 'sent',
+      actionId: originalReceipt.actionId,
+      messageGuid: 'receipt-123',
+    };
+    expect(await bridge.status(first)).toMatchObject(originalIdentity);
+    expect(await bridge.confirm(first)).toMatchObject(originalIdentity);
+    expect((await bridge.status(revised)).state).toBe('pending');
+    expect(send).toHaveBeenCalledOnce();
+    send.mockResolvedValueOnce({
+      platformMessageId: 'receipt-456',
+      threadId: 'bb:' + revised.chatGuid,
+    });
+    const revisedReceipt = await bridge.confirm(revised);
+    expect(revisedReceipt).toMatchObject({
+      state: 'sent',
+      messageGuid: 'receipt-456',
+    });
+    expect(revisedReceipt.actionId).not.toBe(originalReceipt.actionId);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1].slice(0, 3)).toEqual([
+      'bluebubbles',
+      'bb:' + revised.chatGuid,
+      revised.text,
+    ]);
+    expect(await bridge.confirm(first)).toMatchObject(originalIdentity);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not create a core action when active pending capacity is already full', async () => {
+    await seedHistory('pending', Date.now() + 60_000);
+    await expect(bridge.prepare(draft())).rejects.toMatchObject({
+      status: 503,
+      message: 'Web Bob bridge pending draft limit reached.',
+    });
+    expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toEqual([]);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each(['consumed', 'cancelled', 'expired', 'superseded'])(
+    'does not let 10,000 %s history rows exhaust pending capacity',
+    async (state) => {
+      await seedHistory(state, Date.now() - 60_000);
+      const input = await approval();
+      expect(await bridge.status(input)).toMatchObject({ state: 'pending' });
+      expect(
+        listMessageActionsForGroup({ groupFolder: 'webbob' }),
+      ).toHaveLength(1);
+      // Retaining terminal identity prevents replay even when it no longer
+      // consumes pending capacity.
+      await expect(
+        bridge.prepare({ ...draft(), conversationId: 'history-1' }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
+  it('expires elapsed pending drafts before enforcing capacity', async () => {
+    const now = Date.now();
+    await seedHistory('pending', now);
+    await bridge.prepare(draft(), now);
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      expect(
+        db
+          .prepare(
+            'SELECT state, count(*) AS n FROM webbob_drafts GROUP BY state',
+          )
+          .all(),
+      ).toEqual([
+        { state: 'expired', n: 10000 },
+        { state: 'pending', n: 1 },
+      ]);
       expect(send).not.toHaveBeenCalled();
     } finally {
       db.close();
     }
+  });
+
+  it('allows a revision to replace its pending draft at full capacity', async () => {
+    const first = await approval();
+    await seedHistory('pending', Date.now() + 60_000, 9999);
+    const second = await approval({ ...draft(), revision: 2 });
+    expect(await bridge.status(first)).toMatchObject({ state: 'superseded' });
+    expect(await bridge.status(second)).toMatchObject({ state: 'pending' });
+    await expect(bridge.confirm(first)).rejects.toMatchObject({ status: 409 });
+    await expect(
+      bridge.prepare({ ...draft(), conversationId: 'unrelated-conversation' }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(await bridge.status(second)).toMatchObject({ state: 'pending' });
+    expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
+      2,
+    );
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('invalidates pending challenges on service restart', async () => {
@@ -600,6 +870,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
   it('rejects non-loopback peers and forwarded proxy headers at HTTP ingress', async () => {
     expect(isWebBobLoopbackAddress('127.0.0.1')).toBe(true);
     expect(isWebBobLoopbackAddress('::ffff:127.0.0.1')).toBe(true);
+    expect(isWebBobLoopbackAddress(':ffff:127.0.0.1')).toBe(false);
     expect(isWebBobLoopbackAddress('8.8.8.8')).toBe(false);
     expect(isWebBobLoopbackAddress(undefined)).toBe(false);
     const denied = {
