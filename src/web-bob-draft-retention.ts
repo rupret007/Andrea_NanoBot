@@ -8,6 +8,25 @@ export const WEB_BOB_TERMINAL_DRAFT_LIMIT = 10000;
 export const WEB_BOB_REVISION_LINEAGE_LIMIT = 20000;
 export const WEB_BOB_IN_FLIGHT_LIMIT = 32;
 
+export interface WebBobDraftRetentionLimits {
+  terminalDraftLimit: number;
+  revisionLineageLimit: number;
+  inFlightLimit: number;
+}
+
+export const DEFAULT_WEB_BOB_DRAFT_RETENTION_LIMITS: WebBobDraftRetentionLimits =
+  {
+    terminalDraftLimit: WEB_BOB_TERMINAL_DRAFT_LIMIT,
+    revisionLineageLimit: WEB_BOB_REVISION_LINEAGE_LIMIT,
+    inFlightLimit: WEB_BOB_IN_FLIGHT_LIMIT,
+  };
+
+export function resolveWebBobDraftRetentionLimits(
+  overrides?: Partial<WebBobDraftRetentionLimits>,
+): WebBobDraftRetentionLimits {
+  return { ...DEFAULT_WEB_BOB_DRAFT_RETENTION_LIMITS, ...overrides };
+}
+
 interface RevisionScope {
   actor: string;
   conversationId: string;
@@ -32,10 +51,14 @@ const lineageKey = (identity: string): string =>
  * bounded registry fills, new lineages fail closed while known ones may advance.
  * This avoids replacing an unbounded draft store with unbounded tombstones. */
 export class WebBobDraftRetention {
+  private readonly limits: WebBobDraftRetentionLimits;
+
   constructor(
     private readonly db: Database.Database,
     private readonly fail: Fail,
+    limits?: Partial<WebBobDraftRetentionLimits>,
   ) {
+    this.limits = resolveWebBobDraftRetentionLimits(limits);
     db.exec(`CREATE TABLE IF NOT EXISTS webbob_revision_watermarks (
       lineageKey TEXT PRIMARY KEY,
       identity TEXT NOT NULL UNIQUE,
@@ -56,7 +79,10 @@ export class WebBobDraftRetention {
          FROM webbob_retention_state WHERE id = 1`,
       )
       .get() as { admissionSealed: number; count: number };
-    if (state.admissionSealed || state.count >= WEB_BOB_REVISION_LINEAGE_LIMIT)
+    if (
+      state.admissionSealed ||
+      state.count >= this.limits.revisionLineageLimit
+    )
       this.fail(503, 'Web Bob bridge retained revision limit reached.');
   }
 
@@ -132,7 +158,7 @@ export class WebBobDraftRetention {
         ORDER BY watermark.lineageKey IS NULL, retained.identity
         LIMIT ?`,
       )
-      .all(WEB_BOB_REVISION_LINEAGE_LIMIT + 1) as {
+      .all(this.limits.revisionLineageLimit + 1) as {
       identity: string;
       revision: number;
       existingKey: string | null;
@@ -157,7 +183,7 @@ export class WebBobDraftRetention {
         row.revision < 1
       )
         this.fail(503, 'Web Bob bridge retained revision data is invalid.');
-      if (!row.existingKey && count >= WEB_BOB_REVISION_LINEAGE_LIMIT) {
+      if (!row.existingKey && count >= this.limits.revisionLineageLimit) {
         // Some legacy identities could not be represented. Permanently close
         // admission for ALL untracked identities before any rows are pruned.
         this.db
@@ -198,7 +224,7 @@ export class WebBobDraftRetention {
                ORDER BY expires DESC, rowid DESC LIMIT ?
              )`,
         )
-        .run(WEB_BOB_TERMINAL_DRAFT_LIMIT);
+        .run(this.limits.terminalDraftLimit);
       this.db
         .prepare(
           `DELETE FROM webbob_delivery

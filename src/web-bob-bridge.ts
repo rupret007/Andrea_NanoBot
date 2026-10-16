@@ -22,8 +22,8 @@ import { secureEqual } from './secure-equal.js';
 import { mintWebBobDispatchApproval } from './web-bob-approval.js';
 import {
   WebBobDraftRetention,
-  WEB_BOB_IN_FLIGHT_LIMIT,
-  WEB_BOB_TERMINAL_DRAFT_LIMIT,
+  type WebBobDraftRetentionLimits,
+  resolveWebBobDraftRetentionLimits,
 } from './web-bob-draft-retention.js';
 import {
   DisabledOwnerChallengeDelivery,
@@ -71,6 +71,8 @@ export interface WebBobBridgeConfig {
 export interface WebBobBridgeDeps {
   readonly buildSha?: string;
   readonly ownerChallengeDelivery?: OwnerChallengeDelivery;
+  /** Overrides production retention caps; defaults match shipped limits. */
+  readonly retentionLimits?: Partial<WebBobDraftRetentionLimits>;
   connected(): boolean;
   /** Read the real exact thread membership; never trust caller metadata. */
   resolveRecipient(chatGuid: string): Promise<string[]>;
@@ -202,6 +204,7 @@ export class WebBobBridge {
   private readonly deny: Set<string>;
   private readonly ownerChallengeDelivery: OwnerChallengeDelivery;
   private readonly retention: WebBobDraftRetention;
+  private readonly retentionLimits: WebBobDraftRetentionLimits;
   // Undelivered challenges never reach either persistent store. Keep failed
   // delivery diagnostics briefly in bounded memory; they confer no authority.
   private readonly staged = new Map<string, StoredDraft>();
@@ -279,9 +282,16 @@ export class WebBobBridge {
     this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_server_epoch (
       id INTEGER PRIMARY KEY CHECK (id = 1), epoch TEXT NOT NULL
     )`);
-    this.retention = new WebBobDraftRetention(this.db, (status, message) => {
-      throw new WebBobBridgeError(status, message);
-    });
+    this.retentionLimits = resolveWebBobDraftRetentionLimits(
+      deps.retentionLimits,
+    );
+    this.retention = new WebBobDraftRetention(
+      this.db,
+      (status, message) => {
+        throw new WebBobBridgeError(status, message);
+      },
+      this.retentionLimits,
+    );
     // Restart also revokes deliveries still awaiting an adapter in another
     // instance. Their eventual completion cannot create a persistent draft.
     this.db
@@ -315,7 +325,7 @@ export class WebBobBridge {
       if (row.state !== 'awaiting_delivery') terminal++;
     }
     for (const [id, row] of this.staged) {
-      if (terminal <= WEB_BOB_TERMINAL_DRAFT_LIMIT) break;
+      if (terminal <= this.retentionLimits.terminalDraftLimit) break;
       if (row.state !== 'awaiting_delivery') {
         this.staged.delete(id);
         terminal--;
@@ -857,7 +867,7 @@ export class WebBobBridge {
           )
           .get() as { n: number };
         requireValue(
-          active.n < WEB_BOB_IN_FLIGHT_LIMIT,
+          active.n < this.retentionLimits.inFlightLimit,
           503,
           'Web Bob bridge in-flight approval limit reached.',
         );

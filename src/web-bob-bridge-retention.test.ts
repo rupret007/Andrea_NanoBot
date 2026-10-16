@@ -18,11 +18,21 @@ import type {
   OwnerChallengeSummary,
 } from './owner-challenge-delivery.js';
 import { WebBobBridge, type WebBobDeliveryEvidence } from './web-bob-bridge.js';
-import {
-  WEB_BOB_IN_FLIGHT_LIMIT,
-  WEB_BOB_REVISION_LINEAGE_LIMIT,
-  WEB_BOB_TERMINAL_DRAFT_LIMIT,
-} from './web-bob-draft-retention.js';
+import type { WebBobDraftRetentionLimits } from './web-bob-draft-retention.js';
+
+/** Small caps exercise the same prune/reconcile paths without 10k-row fixtures. */
+const TEST_RETENTION_LIMITS: WebBobDraftRetentionLimits = {
+  terminalDraftLimit: 24,
+  revisionLineageLimit: 48,
+  inFlightLimit: 8,
+};
+const {
+  terminalDraftLimit: TERMINAL_DRAFT_LIMIT,
+  revisionLineageLimit: REVISION_LINEAGE_LIMIT,
+  inFlightLimit: IN_FLIGHT_LIMIT,
+} = TEST_RETENTION_LIMITS;
+/** Enough delivered-revision churn to hit periodic bound checks without 128 slow prepares. */
+const REVISION_CHURN_ITERATIONS = 32;
 
 const config = {
   token: 'synthetic-retention-service-token-123456',
@@ -65,6 +75,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
       resolveRecipient: async () => ['+12025550102'],
       readDelivery,
       sendToTarget: send,
+      retentionLimits: TEST_RETENTION_LIMITS,
       ...(ownerChallengeDelivery ? { ownerChallengeDelivery } : {}),
     });
 
@@ -161,7 +172,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
 
   function seedHistory(
     state: string,
-    count = WEB_BOB_TERMINAL_DRAFT_LIMIT + 3,
+    count = TERMINAL_DRAFT_LIMIT + 3,
     expires = Date.now() + 10 * 60_000,
     sameLineage = false,
   ) {
@@ -354,15 +365,11 @@ describe('Web Bob bounded draft retention and replay protection', () => {
     'bounds retained %s drafts and removes their receipt evidence',
     async (state) => {
       seedHistory(state);
-      expect(counts().terminal).toBe(WEB_BOB_TERMINAL_DRAFT_LIMIT + 3);
+      expect(counts().terminal).toBe(TERMINAL_DRAFT_LIMIT + 3);
       await bridge.prepare(draft());
       const retained = counts();
-      expect(retained.terminal).toBeLessThanOrEqual(
-        WEB_BOB_TERMINAL_DRAFT_LIMIT,
-      );
-      expect(retained.drafts).toBeLessThanOrEqual(
-        WEB_BOB_TERMINAL_DRAFT_LIMIT + 1,
-      );
+      expect(retained.terminal).toBeLessThanOrEqual(TERMINAL_DRAFT_LIMIT);
+      expect(retained.drafts).toBeLessThanOrEqual(TERMINAL_DRAFT_LIMIT + 1);
       expect(retained.evidence).toBe(retained.terminal);
       expect(retained.orphanEvidence).toBe(0);
       expectCoreMatchesBridge();
@@ -374,7 +381,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
     seedHistory('pending');
     restart();
     const retained = counts();
-    expect(retained.drafts).toBeLessThanOrEqual(WEB_BOB_TERMINAL_DRAFT_LIMIT);
+    expect(retained.drafts).toBeLessThanOrEqual(TERMINAL_DRAFT_LIMIT);
     expect(retained.terminal).toBe(retained.drafts);
     expect(retained.evidence).toBe(retained.drafts);
     expect(retained.orphanEvidence).toBe(0);
@@ -523,34 +530,25 @@ describe('Web Bob bounded draft retention and replay protection', () => {
     });
     // Seed the near-cap history in one transaction, then exercise real delivered
     // revisions past the cap on the same lineage without owner confirmation.
-    seedHistory(
-      'cancelled',
-      WEB_BOB_TERMINAL_DRAFT_LIMIT - 1,
-      Date.now(),
-      true,
-    );
-    for (let index = 0; index < 128; index += 1) {
+    seedHistory('cancelled', TERMINAL_DRAFT_LIMIT - 1, Date.now(), true);
+    for (let index = 0; index < REVISION_CHURN_ITERATIONS; index += 1) {
       const current = await approval({
         ...draft(),
-        revision: WEB_BOB_TERMINAL_DRAFT_LIMIT + index,
+        revision: TERMINAL_DRAFT_LIMIT + index,
       });
       if (index % 2 === 1)
         bridge.cancel({ bridgeDraftId: current.bridgeDraftId });
       if (index % 32 === 31) {
-        expect(counts().terminal).toBeLessThanOrEqual(
-          WEB_BOB_TERMINAL_DRAFT_LIMIT,
-        );
-        expect(counts().drafts).toBeLessThanOrEqual(
-          WEB_BOB_TERMINAL_DRAFT_LIMIT + 1,
-        );
+        expect(counts().terminal).toBeLessThanOrEqual(TERMINAL_DRAFT_LIMIT);
+        expect(counts().drafts).toBeLessThanOrEqual(TERMINAL_DRAFT_LIMIT + 1);
         expectCoreMatchesBridge();
       }
     }
-    expect(deliver).toHaveBeenCalledTimes(129);
+    expect(deliver).toHaveBeenCalledTimes(REVISION_CHURN_ITERATIONS + 1);
     expect(send).not.toHaveBeenCalled();
     for (let index = 0; index < 2; index += 1) {
       restart();
-      expect(counts().drafts).toBe(WEB_BOB_TERMINAL_DRAFT_LIMIT);
+      expect(counts().drafts).toBe(TERMINAL_DRAFT_LIMIT);
       expectCoreMatchesBridge();
       await expect(bridge.confirm(original)).rejects.toMatchObject({
         status: 404,
@@ -559,7 +557,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
         status: 409,
       });
     }
-  });
+  }, 30_000);
 
   it('reconciles the committed core action and outcome when the bridge insert fails', async () => {
     inspect((db) => {
@@ -701,7 +699,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
     });
     seedHistory(
       'cancelled',
-      WEB_BOB_TERMINAL_DRAFT_LIMIT + 3,
+      TERMINAL_DRAFT_LIMIT + 3,
       Date.now() + 60 * 60_000,
     );
     const confirmation = bridge.confirm(original);
@@ -777,7 +775,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
 
   it('retains a bounded set of unresolved dispatch pins across restart and rejects new consumption without using its token', async () => {
     const original = await approval();
-    seedHistory('consumed', WEB_BOB_IN_FLIGHT_LIMIT - 1);
+    seedHistory('consumed', IN_FLIGHT_LIMIT - 1);
     // Model a process exit after durable consumption but before receipt settlement.
     inspect((db) =>
       db
@@ -788,7 +786,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
     );
     seedHistory(
       'cancelled',
-      WEB_BOB_TERMINAL_DRAFT_LIMIT + 3,
+      TERMINAL_DRAFT_LIMIT + 3,
       Date.now() + 60 * 60_000,
     );
     restart();
@@ -800,10 +798,8 @@ describe('Web Bob bounded draft retention and replay protection', () => {
           )
           .get(),
       ),
-    ).toEqual({ count: WEB_BOB_IN_FLIGHT_LIMIT });
-    expect(counts().drafts).toBe(
-      WEB_BOB_TERMINAL_DRAFT_LIMIT + WEB_BOB_IN_FLIGHT_LIMIT,
-    );
+    ).toEqual({ count: IN_FLIGHT_LIMIT });
+    expect(counts().drafts).toBe(TERMINAL_DRAFT_LIMIT + IN_FLIGHT_LIMIT);
     expectCoreMatchesBridge();
     await expect(bridge.confirm(original)).rejects.toMatchObject({
       status: 409,
@@ -833,7 +829,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
   it('bounds revision history and seals unknown lineages across restart when legacy history overflows', async () => {
     const original = await approval();
     bridge.cancel({ bridgeDraftId: original.bridgeDraftId });
-    seedHistory('cancelled', WEB_BOB_REVISION_LINEAGE_LIMIT + 1);
+    seedHistory('cancelled', REVISION_LINEAGE_LIMIT + 1);
     restart();
 
     for (const revision of [2, 3]) {
@@ -849,11 +845,9 @@ describe('Web Bob bounded draft retention and replay protection', () => {
         ),
       ).toEqual({
         admissionSealed: 1,
-        count: WEB_BOB_REVISION_LINEAGE_LIMIT,
+        count: REVISION_LINEAGE_LIMIT,
       });
-      expect(counts().terminal).toBeLessThanOrEqual(
-        WEB_BOB_TERMINAL_DRAFT_LIMIT,
-      );
+      expect(counts().terminal).toBeLessThanOrEqual(TERMINAL_DRAFT_LIMIT);
       const beforeActions = listMessageActionsForGroup({
         groupFolder: 'webbob',
       }).length;
