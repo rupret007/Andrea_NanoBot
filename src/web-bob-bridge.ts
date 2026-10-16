@@ -20,12 +20,41 @@ import {
 } from './messaging-outbound-pause.js';
 import { secureEqual } from './secure-equal.js';
 import { mintWebBobDispatchApproval } from './web-bob-approval.js';
+import {
+  DisabledOwnerChallengeDelivery,
+  type OwnerChallengeDelivery,
+} from './owner-challenge-delivery.js';
 
 const TTL = 5 * 60_000;
+const APPROVAL_TTL = 30_000;
 const ISSUER = 'web-bob';
 const AUDIENCE = 'andrea';
 const PREFIX = '/web-bob/v1/';
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
+// This dedicated owner surface is for Jeff. Caller identity claims confer no
+// authority; only possession of the independently delivered approval can do so.
+const OWNER_ACTOR = hash('web-bob:owner:jeff');
+const challengeHash = (
+  challenge: string,
+  id: string,
+  revision: number,
+  digest: string,
+) =>
+  hash(
+    JSON.stringify([
+      'web-bob:owner-approval:v2',
+      id,
+      revision,
+      digest,
+      challenge,
+    ]),
+  );
+
+export function isWebBobLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  return LOOPBACK_ADDRESSES.has(address.replace(/^\[|\]$/g, ''));
+}
 
 export interface WebBobBridgeConfig {
   token: string;
@@ -35,6 +64,7 @@ export interface WebBobBridgeConfig {
 
 export interface WebBobBridgeDeps {
   readonly buildSha?: string;
+  readonly ownerChallengeDelivery?: OwnerChallengeDelivery;
   connected(): boolean;
   /** Read the real exact thread membership; never trust caller metadata. */
   resolveRecipient(chatGuid: string): Promise<string[]>;
@@ -85,6 +115,7 @@ interface StoredDraft {
   state: string;
   actionId: string;
   confirmationRequestId: string | null;
+  approvedAt: number | null;
 }
 
 export class WebBobBridgeError extends Error {
@@ -114,23 +145,14 @@ export function canonicalWebBobAddress(value: string): string {
   return '+' + (digits.length === 10 ? '1' : '') + digits;
 }
 
-function parseScope(value: Record<string, unknown>): Scope {
+function parseDraftScope(value: Record<string, unknown>): Scope {
   requireValue(value.issuer === ISSUER && value.audience === AUDIENCE);
-  for (const key of [
-    'actor',
-    'conversationId',
-    'epoch',
-    'draftId',
-    'draftRequestId',
-  ]) {
+  for (const key of ['conversationId', 'epoch', 'draftId']) {
     requireValue(
       typeof value[key] === 'string' &&
         /^[a-zA-Z0-9_-]{8,128}$/.test(value[key] as string),
     );
   }
-  requireValue(
-    typeof value.actor === 'string' && /^[a-f0-9]{64}$/.test(value.actor),
-  );
   requireValue(
     Number.isSafeInteger(value.revision) && Number(value.revision) > 0,
   );
@@ -153,12 +175,12 @@ function parseScope(value: Record<string, unknown>): Scope {
   return {
     issuer: ISSUER,
     audience: AUDIENCE,
-    actor: value.actor,
+    actor: OWNER_ACTOR,
     conversationId: value.conversationId as string,
     epoch: value.epoch as string,
     draftId: value.draftId as string,
     revision: value.revision as number,
-    draftRequestId: value.draftRequestId as string,
+    draftRequestId: randomBytes(24).toString('hex'),
     chatGuid: value.chatGuid,
     addresses,
     text: value.text,
@@ -166,12 +188,13 @@ function parseScope(value: Record<string, unknown>): Scope {
 }
 
 /** Optional host integration; constructing it does not open a port or send.
- * FULL synchronous SQLite commits consume consent before any external await.
+ * FULL synchronous SQLite commits consume consent before external dispatch.
  * Existing control and MCP handlers never have a reference to this ingress. */
 export class WebBobBridge {
   private readonly db: Database.Database;
   private readonly epoch = randomBytes(24).toString('hex');
   private readonly deny: Set<string>;
+  private readonly ownerChallengeDelivery: OwnerChallengeDelivery;
   private readonly inspections = new Map<
     string,
     Promise<Record<string, unknown>>
@@ -190,6 +213,8 @@ export class WebBobBridge {
       'Web Bob bridge requires dedicated authentication and Instinct denial configuration.',
     );
     this.deny = new Set(config.denyAddresses.map(canonicalWebBobAddress));
+    this.ownerChallengeDelivery =
+      deps.ownerChallengeDelivery ?? new DisabledOwnerChallengeDelivery();
     if (databasePath !== ':memory:') {
       fs.mkdirSync(path.dirname(databasePath), {
         recursive: true,
@@ -208,15 +233,32 @@ export class WebBobBridge {
       id TEXT PRIMARY KEY, scope TEXT NOT NULL, digest TEXT NOT NULL,
       challengeHash TEXT NOT NULL, serverEpoch TEXT NOT NULL, expires INTEGER NOT NULL,
       pauseGeneration INTEGER NOT NULL, state TEXT NOT NULL, actionId TEXT NOT NULL,
-      confirmationRequestId TEXT
+      confirmationRequestId TEXT, approvedAt INTEGER
     )`);
+    if (
+      !(this.db.pragma('table_info(webbob_drafts)') as { name: string }[]).some(
+        (column) => column.name === 'approvedAt',
+      )
+    ) {
+      this.db.exec('ALTER TABLE webbob_drafts ADD COLUMN approvedAt INTEGER');
+    }
     this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_delivery (
       draftId TEXT PRIMARY KEY, evidence TEXT NOT NULL
     )`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS webbob_drafts_revision
+      ON webbob_drafts (
+        json_extract(scope, '$.actor'),
+        json_extract(scope, '$.conversationId'),
+        json_extract(scope, '$.epoch'),
+        json_extract(scope, '$.draftId'),
+        json_extract(scope, '$.revision')
+      )`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS webbob_drafts_pending
+      ON webbob_drafts (state, expires)`);
     // Restart cannot revive a pending owner decision. Consumed records survive.
     this.db
       .prepare(
-        "UPDATE webbob_drafts SET state = 'expired' WHERE state = 'pending'",
+        "UPDATE webbob_drafts SET state = 'expired', challengeHash = '' WHERE state IN ('pending', 'awaiting_delivery')",
       )
       .run();
   }
@@ -262,15 +304,15 @@ export class WebBobBridge {
 
   async prepare(
     value: Record<string, unknown>,
+    now = Date.now(),
   ): Promise<Record<string, unknown>> {
-    const scope = parseScope(value);
+    const scope = parseDraftScope(value);
     await this.validateRecipient(scope);
     requireValue(
       !isMessagingOutboundPaused(),
       409,
       'Andrea outbound messaging is paused.',
     );
-    const now = Date.now();
     const fence = captureMessagingOutboundAuthorizationFence(
       new Date(now).toISOString(),
     );
@@ -283,87 +325,148 @@ export class WebBobBridge {
         scope.conversationId,
         scope.epoch,
         scope.draftId,
+        scope.revision,
       ]),
     );
-    const challenge = 'wbtxt-' + randomBytes(16).toString('hex');
-    const action = createOrRefreshMessageActionFromDraft({
-      groupFolder: 'webbob',
-      presentationChannel: 'bluebubbles',
-      presentationChatJid: 'webbob:' + scope.conversationId,
-      sourceType: 'manual_prompt',
-      sourceKey: 'webbob:inbound:' + id,
-      sourceSummary: 'Exact Web Bob owner draft',
-      draftProvenance: 'owner_literal',
-      draftText: scope.text,
-      forceApproval: true,
-      targetChannelOverride: 'bluebubbles',
-      targetOverride: {
-        kind: 'external_thread',
-        chatJid: 'bb:' + scope.chatGuid,
-        isGroup: false,
-      },
-    });
-    this.db
+    const challenge = 'wbtxt-' + randomBytes(32).toString('hex');
+    const action = this.db
       .transaction(() => {
         requireValue(
-          !this.db.prepare('SELECT id FROM webbob_drafts WHERE id = ?').get(id),
+          !this.db
+            .prepare(
+              `SELECT id FROM webbob_drafts
+               WHERE json_extract(scope, '$.actor') = ?
+                 AND json_extract(scope, '$.conversationId') = ?
+                 AND json_extract(scope, '$.epoch') = ?
+                 AND json_extract(scope, '$.draftId') = ?
+                 AND json_extract(scope, '$.revision') >= ? LIMIT 1`,
+            )
+            .get(
+              scope.actor,
+              scope.conversationId,
+              scope.epoch,
+              scope.draftId,
+              scope.revision,
+            ),
           409,
-          'This draft request already exists; review a fresh draft.',
+          'This draft revision already exists or is stale; review a fresh draft.',
         );
+        // Retain terminal rows for replay protection and receipt inspection,
+        // but only active decisions consume capacity. Replace under the same
+        // write lock so an old challenge cannot race the new revision.
+        this.db
+          .prepare(
+            "UPDATE webbob_drafts SET state = 'expired', challengeHash = '' WHERE state IN ('pending', 'awaiting_delivery') AND expires <= ?",
+          )
+          .run(now);
+        this.db
+          .prepare(
+            `UPDATE webbob_drafts SET state = 'superseded', challengeHash = ''
+             WHERE state IN ('pending', 'awaiting_delivery') AND json_extract(scope, '$.conversationId') = ?`,
+          )
+          .run(scope.conversationId);
         const count = this.db
-          .prepare('SELECT count(*) AS n FROM webbob_drafts')
+          .prepare(
+            "SELECT count(*) AS n FROM webbob_drafts WHERE state IN ('pending', 'awaiting_delivery')",
+          )
           .get() as { n: number };
         requireValue(
           count.n < 10000,
           503,
-          'Web Bob bridge history limit reached.',
+          'Web Bob bridge pending draft limit reached.',
         );
-        // A new draft supersedes every older pending card in this conversation.
-        const pending = this.db
-          .prepare(
-            "SELECT id, scope FROM webbob_drafts WHERE state = 'pending'",
-          )
-          .all() as { id: string; scope: string }[];
-        for (const row of pending) {
-          const other = JSON.parse(row.scope) as Scope;
-          if (other.conversationId === scope.conversationId)
-            this.db
-              .prepare(
-                "UPDATE webbob_drafts SET state = 'superseded' WHERE id = ?",
-              )
-              .run(row.id);
-        }
+        const action = createOrRefreshMessageActionFromDraft({
+          groupFolder: 'webbob',
+          presentationChannel: 'bluebubbles',
+          presentationChatJid: 'webbob:' + scope.conversationId,
+          sourceType: 'manual_prompt',
+          sourceKey: 'webbob:inbound:' + id,
+          sourceSummary: 'Exact Web Bob owner draft',
+          draftProvenance: 'owner_literal',
+          draftText: scope.text,
+          forceApproval: true,
+          targetChannelOverride: 'bluebubbles',
+          targetOverride: {
+            kind: 'external_thread',
+            chatJid: 'bb:' + scope.chatGuid,
+            isGroup: false,
+          },
+        });
         this.db
           .prepare(
-            'INSERT INTO webbob_drafts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)',
+            'INSERT INTO webbob_drafts (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
           )
           .run(
             id,
             serialized,
             digest,
-            hash(challenge),
+            challengeHash(challenge, id, scope.revision, digest),
             this.epoch,
             now + TTL,
             fence.pauseGeneration,
-            'pending',
+            'awaiting_delivery',
             action.messageActionId,
           );
+        return action;
       })
       .immediate();
+    try {
+      await this.ownerChallengeDelivery.deliver(
+        challenge,
+        Object.freeze({
+          bridgeDraftId: id,
+          revision: scope.revision,
+          contentHash: digest,
+          expiresAt: now + TTL,
+          actor: scope.actor,
+          conversationId: scope.conversationId,
+          chatGuid: scope.chatGuid,
+          addresses: Object.freeze([...scope.addresses]),
+          text: scope.text,
+        }),
+      );
+      requireValue(validateMessagingOutboundAuthorizationFence(fence).ok, 409);
+      const delivered = this.db
+        .prepare(
+          "UPDATE webbob_drafts SET state = 'pending' WHERE id = ? AND state = 'awaiting_delivery' AND serverEpoch = ? AND expires > ?",
+        )
+        .run(id, this.epoch, Math.max(now, Date.now()));
+      requireValue(delivered.changes, 409);
+    } catch {
+      this.db
+        .prepare(
+          "UPDATE webbob_drafts SET state = 'approval_unavailable', challengeHash = '' WHERE id = ? AND state = 'awaiting_delivery'",
+        )
+        .run(id);
+      // Delivery errors can contain secret bytes, including bridge error types.
+      // Never forward any adapter exception or return the token as a fallback.
+      throw new WebBobBridgeError(
+        503,
+        'Owner approval delivery is unavailable.',
+      );
+    }
     return {
       ok: true,
       draftId: id,
       digest,
-      challenge,
       expiresAt: now + TTL,
       actionId: action.messageActionId,
     };
   }
 
-  private bound(value: Record<string, unknown>): {
+  private bound(
+    value: Record<string, unknown>,
+    confirmation = false,
+  ): {
     row: StoredDraft;
     scope: Scope;
   } {
+    requireValue(
+      Object.keys(value).every(
+        (key) =>
+          key === 'bridgeDraftId' || (confirmation && key === 'approvalToken'),
+      ),
+    );
     requireValue(
       typeof value.bridgeDraftId === 'string' &&
         /^[a-f0-9]{64}$/.test(value.bridgeDraftId),
@@ -372,12 +475,15 @@ export class WebBobBridge {
       .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
       .get(value.bridgeDraftId) as StoredDraft | undefined;
     requireValue(row, 404, 'Unknown Web Bob draft.');
-    const scope = parseScope(value);
     requireValue(
-      secureEqual(hash(JSON.stringify(scope)), row.digest),
+      typeof row.scope === 'string' &&
+        typeof row.digest === 'string' &&
+        /^[a-f0-9]{64}$/.test(row.digest) &&
+        secureEqual(hash(row.scope), row.digest),
       403,
-      'This confirmation does not match the exact draft and login.',
+      'This operation does not match the stored draft.',
     );
+    const scope = JSON.parse(row.scope) as Scope;
     return { row, scope };
   }
 
@@ -385,7 +491,7 @@ export class WebBobBridge {
     const { row } = this.bound(value);
     this.db
       .prepare(
-        "UPDATE webbob_drafts SET state = 'cancelled' WHERE id = ? AND state = 'pending'",
+        "UPDATE webbob_drafts SET state = 'cancelled', challengeHash = '' WHERE id = ? AND state IN ('pending', 'awaiting_delivery')",
       )
       .run(row.id);
     const current = this.db
@@ -561,39 +667,49 @@ export class WebBobBridge {
   async confirm(
     value: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    const { row, scope } = this.bound(value);
+    const { row, scope } = this.bound(value, true);
     requireValue(
-      typeof value.confirmation === 'string' &&
-        /^yes wbtxt-[a-f0-9]{32}$/.test(value.confirmation),
-    );
-    requireValue(
-      secureEqual(hash(value.confirmation.slice(4)), row.challengeHash),
-      403,
-    );
-    requireValue(
-      typeof value.confirmationRequestId === 'string' &&
-        /^[a-zA-Z0-9_-]{8,128}$/.test(value.confirmationRequestId) &&
-        value.confirmationRequestId !== scope.draftRequestId,
-      403,
-      'A separate owner confirmation is required.',
-    );
-    if (row.state === 'consumed') return this.refreshReceipt(row);
-    requireValue(
-      row.state === 'pending' &&
-        row.serverEpoch === this.epoch &&
-        row.expires > Date.now(),
+      row.state === 'pending' && row.serverEpoch === this.epoch,
       409,
       'This draft confirmation is no longer current.',
     );
     requireValue(
-      typeof value.approvedAt === 'number' &&
-        value.approvedAt >= row.expires - TTL &&
-        value.approvedAt <= Date.now() + 1000 &&
-        value.approvedAt >= Date.now() - 30_000,
+      typeof value.approvalToken === 'string' &&
+        /^wbtxt-[a-f0-9]{64}$/.test(value.approvalToken),
       403,
     );
+    requireValue(
+      secureEqual(
+        challengeHash(value.approvalToken, row.id, scope.revision, row.digest),
+        row.challengeHash,
+      ),
+      403,
+    );
+    // Owner approval is established by the token, not the bearer caller's
+    // claims. Andrea owns both its timestamp and the audit request identity.
+    const approvedAt = Date.now();
+    const confirmationRequestId = randomBytes(24).toString('hex');
+    const validateFreshness = () => {
+      const currentTime = Date.now();
+      requireValue(
+        row.expires > currentTime,
+        409,
+        'This draft confirmation is no longer current.',
+      );
+      requireValue(
+        approvedAt >= row.expires - TTL &&
+          approvedAt <= currentTime &&
+          currentTime - approvedAt < APPROVAL_TTL,
+        403,
+      );
+      return currentTime;
+    };
+    validateFreshness();
     await this.validateRecipient(scope);
-    const authorizationAt = new Date(value.approvedAt).toISOString();
+    // Membership lookup can outlive either the card or the separate owner
+    // approval. Both must still be current before consuming durable consent.
+    const validatedAt = validateFreshness();
+    const authorizationAt = new Date(approvedAt).toISOString();
     requireValue(
       validateMessagingOutboundAuthorizationFence({
         authorizationAt,
@@ -606,20 +722,23 @@ export class WebBobBridge {
     // replacement, restart, concurrent approval and disk errors all fail closed.
     const consumed = this.db
       .prepare(
-        "UPDATE webbob_drafts SET state = 'consumed', confirmationRequestId = ? WHERE id = ? AND state = 'pending' AND serverEpoch = ? AND expires > ?",
+        "UPDATE webbob_drafts SET state = 'consumed', challengeHash = '', confirmationRequestId = ?, approvedAt = ? WHERE id = ? AND state = 'pending' AND serverEpoch = ? AND expires > ? AND digest = ? AND scope = ? AND challengeHash = ?",
       )
-      .run(value.confirmationRequestId, row.id, this.epoch, Date.now());
-    if (!consumed.changes) {
-      const current = this.db
-        .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
-        .get(row.id) as StoredDraft;
-      requireValue(
-        current.state === 'consumed',
-        409,
-        'This draft confirmation is no longer current.',
+      .run(
+        confirmationRequestId,
+        approvedAt,
+        row.id,
+        this.epoch,
+        validatedAt,
+        row.digest,
+        row.scope,
+        row.challengeHash,
       );
-      return this.refreshReceipt(current);
-    }
+    requireValue(
+      consumed.changes,
+      409,
+      'This draft confirmation is no longer current.',
+    );
     row.state = 'consumed';
     const action = getMessageAction(row.actionId);
     requireValue(
@@ -638,6 +757,7 @@ export class WebBobBridge {
       ownerAuthorizationAt: authorizationAt,
       webBobApproval,
       sendToTarget: async (channel, chatJid, text, options) => {
+        validateFreshness();
         requireValue(
           channel === 'bluebubbles' &&
             chatJid === 'bb:' + scope.chatGuid &&
@@ -683,12 +803,20 @@ export class WebBobBridge {
       });
       res.end(JSON.stringify(body));
     };
+    const authorization = req.headers.authorization;
+    const host = req.headers.host;
     if (
-      req.headers.origin ||
-      !secureEqual(
-        req.headers.authorization || '',
-        'Bearer ' + this.config.token,
-      )
+      req.headers.origin !== undefined ||
+      req.headers['x-forwarded-for'] !== undefined ||
+      req.headers['x-forwarded-host'] !== undefined ||
+      req.headers['x-real-ip'] !== undefined ||
+      req.headers.forwarded !== undefined ||
+      typeof authorization !== 'string' ||
+      typeof host !== 'string' ||
+      !/^127\.0\.0\.1(?::\d+)?$/.test(host) ||
+      !isWebBobLoopbackAddress(req.socket?.remoteAddress) ||
+      !isWebBobLoopbackAddress(req.socket?.localAddress) ||
+      !secureEqual(authorization, 'Bearer ' + this.config.token)
     ) {
       reply(401, { error: 'Unauthorized' });
       return;
@@ -697,7 +825,7 @@ export class WebBobBridge {
       if (req.method === 'GET' && req.url === PREFIX + 'health') {
         reply(200, {
           ok: true,
-          protocol: 1,
+          protocol: 2,
           service: 'andrea-web-bob',
           sha: this.deps.buildSha || null,
           connected: this.deps.connected(),

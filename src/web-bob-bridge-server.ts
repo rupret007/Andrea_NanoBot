@@ -203,8 +203,9 @@ export async function readWebBobDelivery(
   return { state, error, deliveredAt };
 }
 
-/** Default off. A dedicated private configuration explicitly enables this
- * owner surface; the existing control token can never activate it. */
+/** Default off. Private configuration enables only the bearer surface; owner
+ * challenge delivery remains disabled. The existing control token can never
+ * activate it. No out-of-band messaging adapter is wired here. */
 export function startWebBobBridgeServer(deps: {
   getChannel(): BlueBubblesChannel | null;
 }): http.Server | null {
