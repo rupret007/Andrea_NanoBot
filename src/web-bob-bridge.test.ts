@@ -504,6 +504,78 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
+  it('keeps consumed delivery evidence readable over HTTP after upgrading the legacy approval schema', async () => {
+    const input = await approval();
+    readDelivery.mockResolvedValue({
+      state: 'delivery_failed',
+      error: 4,
+      deliveredAt: null,
+    });
+    const failed = await bridge.confirm(confirmation(input));
+    const pending = await approval({ ...draft(), draftId: 'pending-123' });
+    bridge.close();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      // Delivery protocol 1 persisted receipts before owner approval added
+      // approvedAt and the revision/capacity indexes to the draft schema.
+      db.exec(`ALTER TABLE webbob_drafts DROP COLUMN approvedAt;
+        DROP INDEX webbob_drafts_revision;
+        DROP INDEX webbob_drafts_pending;`);
+    } finally {
+      db.close();
+    }
+    // The production owner-approval adapter remains disabled after upgrade.
+    bridge = open(null);
+    readDelivery.mockRejectedValue(new Error('unavailable'));
+    await withHttp(async (post) => {
+      const response = await post('status', identity(input));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        state: 'delivery_failed',
+        actionId: failed.actionId,
+        messageGuid: failed.messageGuid,
+        digest: failed.digest,
+        deliveryProtocol: 1,
+        delivery: {
+          state: 'delivery_failed',
+          error: 4,
+          deliveredAt: null,
+          checkedAt: (failed.delivery as { checkedAt: number }).checkedAt,
+          actionId: failed.actionId,
+          messageGuid: failed.messageGuid,
+          digest: failed.digest,
+          fresh: false,
+        },
+        deliveryRefreshUnavailable: true,
+      });
+      expect((await post('confirm', confirmation(input))).status).toBe(409);
+      expect((await post('confirm', confirmation(pending))).status).toBe(409);
+      expect(
+        await (await post('status', identity(pending))).json(),
+      ).toMatchObject({
+        state: 'expired',
+      });
+      readDelivery.mockResolvedValue({
+        state: 'delivered',
+        error: 0,
+        deliveredAt: (failed.delivery as { checkedAt: number }).checkedAt + 1,
+      });
+      const refreshed = await post('status', identity(input));
+      expect(refreshed.status).toBe(200);
+      expect(await refreshed.json()).toMatchObject({
+        state: 'delivered',
+        actionId: failed.actionId,
+        messageGuid: failed.messageGuid,
+        digest: failed.digest,
+        delivery: { fresh: true },
+      });
+    });
+    expect(send).toHaveBeenCalledOnce();
+    expect(deliver).toHaveBeenCalledTimes(2);
+  });
+
   it('coalesces concurrent status reads, rejects altered scope, and never dispatches pending drafts', async () => {
     const input = await approval();
     expect((await bridge.status(identity(input))).state).toBe('pending');

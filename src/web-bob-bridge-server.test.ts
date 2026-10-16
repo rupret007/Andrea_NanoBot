@@ -423,6 +423,10 @@ describe('optional Web Bob bridge runtime boundary', () => {
       expect(server.listen).toHaveBeenCalledWith(43210, '127.0.0.1');
       expect(server.requestTimeout).toBe(20_000);
       expect(server.headersTimeout).toBe(5_000);
+      const dependencies = vi.mocked(WebBobBridge).mock.calls[0][2];
+      expect(dependencies.resolveRecipient).toBe(readWebBobRecipient);
+      expect(dependencies.readDelivery).toBe(readWebBobDelivery);
+      expect(dependencies).not.toHaveProperty('ownerChallengeDelivery');
       expect(bridgeStub.close).not.toHaveBeenCalled();
       server.emit('close');
       expect(bridgeStub.close).toHaveBeenCalledOnce();
