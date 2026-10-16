@@ -4,8 +4,8 @@ import { secureEqual } from './secure-equal.js';
 import type { MessageActionRecord } from './types.js';
 
 /** Host-only capability. Serialized input and a caller-selected chat ID cannot
- * satisfy this boundary. Only the authenticated bridge mints it after its
- * durable, recipient/body/session-bound challenge has been consumed. */
+ * satisfy this boundary. The bridge mints it only after consuming an owner
+ * token delivered out of band and bound to its stored draft/revision/content. */
 export interface WebBobDispatchApproval {
   readonly surface: 'web-bob';
 }

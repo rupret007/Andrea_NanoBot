@@ -16,6 +16,10 @@ import {
   updateMessageAction,
 } from './db.js';
 import { executeExplicitlyAuthorizedMessageAction } from './message-actions.js';
+import type {
+  OwnerChallengeDelivery,
+  OwnerChallengeSummary,
+} from './owner-challenge-delivery.js';
 import { setMessagingOutboundPaused } from './messaging-outbound-pause.js';
 import { isWebBobLoopbackAddress, WebBobBridge } from './web-bob-bridge.js';
 
@@ -45,22 +49,65 @@ describe('Web Bob dedicated Andrea ingress', () => {
   const resolve = vi.fn();
   const connected = vi.fn();
   const readDelivery = vi.fn();
-  const open = () =>
+  const deliver =
+    vi.fn<
+      (challenge: string, summary: OwnerChallengeSummary) => Promise<void>
+    >();
+  const delivered = new Map<string, string>();
+  const open = (
+    ownerChallengeDelivery: OwnerChallengeDelivery | null = { deliver },
+  ) =>
     new WebBobBridge(config, path.join(folder, 'bridge.db'), {
       connected,
       resolveRecipient: resolve,
       readDelivery,
       sendToTarget: send,
+      ...(ownerChallengeDelivery ? { ownerChallengeDelivery } : {}),
     });
   const approval = async (input = draft()) => {
     const card = await bridge.prepare(input);
     return {
       ...input,
       bridgeDraftId: card.draftId,
-      confirmation: 'yes ' + card.challenge,
-      confirmationRequestId: 'confirm-123',
-      approvedAt: Date.now(),
+      approvalToken: delivered.get(card.draftId as string)!,
     };
+  };
+  const confirmation = (input: {
+    bridgeDraftId: unknown;
+    approvalToken: string;
+  }) => ({
+    bridgeDraftId: input.bridgeDraftId,
+    approvalToken: input.approvalToken,
+  });
+  const identity = (input: { bridgeDraftId: unknown }) => ({
+    bridgeDraftId: input.bridgeDraftId,
+  });
+  const withHttp = async (
+    run: (
+      post: (route: string, body: unknown) => Promise<Response>,
+    ) => Promise<void>,
+  ) => {
+    const server = http.createServer((req, res) => {
+      void bridge.handleRequest(req, res);
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    const port = (server.address() as { port: number }).port;
+    try {
+      await run((route, body) =>
+        fetch(`http://127.0.0.1:${port}/web-bob/v1/${route}`, {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + config.token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   };
   const seedHistory = async (state: string, expires: number, count = 10000) => {
     const db = new (await import('better-sqlite3')).default(
@@ -72,10 +119,21 @@ describe('Web Bob dedicated Andrea ingress', () => {
           VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < ?
         )
         INSERT INTO webbob_drafts
+          (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId, confirmationRequestId)
         SELECT CAST(n AS TEXT), json_set(?, '$.conversationId', 'history-' || n),
           '', '', '', ?, 0, ?, '', NULL
         FROM entries`,
-      ).run(count, JSON.stringify(draft()), expires, state);
+      ).run(
+        count,
+        JSON.stringify({
+          ...draft(),
+          actor: createHash('sha256')
+            .update('web-bob:owner:jeff')
+            .digest('hex'),
+        }),
+        expires,
+        state,
+      );
     } finally {
       db.close();
     }
@@ -87,6 +145,11 @@ describe('Web Bob dedicated Andrea ingress', () => {
     resolve.mockReset();
     connected.mockReset();
     readDelivery.mockReset();
+    delivered.clear();
+    deliver.mockReset();
+    deliver.mockImplementation(async (challenge, summary) => {
+      delivered.set(summary.bridgeDraftId, challenge);
+    });
     readDelivery.mockResolvedValue({
       state: 'sent',
       error: 0,
@@ -107,10 +170,246 @@ describe('Web Bob dedicated Andrea ingress', () => {
     fs.rmSync(folder, { recursive: true, force: true });
   });
 
+  it('gives the bearer caller only a draft reference and delivers the token exclusively out of band', async () => {
+    await withHttp(async (post) => {
+      const response = await post('draft', draft());
+      expect(response.status).toBe(200);
+      const raw = await response.text();
+      const card = JSON.parse(raw);
+      expect(deliver).toHaveBeenCalledOnce();
+      const [token, summary] = deliver.mock.calls[0];
+      expect(token).toMatch(/^wbtxt-[0-9a-f]{64}$/);
+      expect(summary).toMatchObject({
+        bridgeDraftId: card.draftId,
+        revision: 1,
+        conversationId: draft().conversationId,
+        chatGuid: draft().chatGuid,
+        addresses: draft().addresses,
+        text: draft().text,
+      });
+      expect(raw).not.toContain(token);
+      for (const field of ['challenge', 'approvalToken', 'confirmation']) {
+        expect(card).not.toHaveProperty(field);
+      }
+      const draftIdentity = { bridgeDraftId: card.draftId };
+      expect((await post('confirm', draftIdentity)).status).toBe(403);
+      expect(
+        (
+          await post('confirm', {
+            ...draftIdentity,
+            approvalToken: 'wbtxt-' + '0'.repeat(64),
+          })
+        ).status,
+      ).toBe(403);
+      const status = await post('status', draftIdentity);
+      expect(await status.text()).not.toContain(token);
+      expect(send).not.toHaveBeenCalled();
+      expect(
+        (await post('confirm', { ...draftIdentity, approvalToken: token }))
+          .status,
+      ).toBe(200);
+      expect(
+        (await post('confirm', { ...draftIdentity, approvalToken: token }))
+          .status,
+      ).toBe(409);
+      expect(send).toHaveBeenCalledOnce();
+    });
+  });
+
+  it('rejects forged authority metadata at HTTP ingress even with the real owner token', async () => {
+    const input = await approval();
+    await withHttp(async (post) => {
+      for (const [field, value] of Object.entries({
+        actor: 'b'.repeat(64),
+        approvedAt: Date.now() + 60_000,
+        requestId: 'attacker-request',
+        confirmationRequestId: 'attacker-confirmation',
+        scope: { ...draft(), text: 'Attacker replacement.' },
+      })) {
+        expect(
+          (await post('confirm', { ...confirmation(input), [field]: value }))
+            .status,
+        ).toBe(400);
+      }
+      expect(send).not.toHaveBeenCalled();
+      expect((await bridge.status(identity(input))).state).toBe('pending');
+    });
+  });
+
+  it('derives actor, request IDs, approval time and dispatch scope from trusted server state', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-16T12:00:00.000Z'));
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+      { readonly: true },
+    );
+    try {
+      const pending = db
+        .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
+        .get(input.bridgeDraftId) as {
+        scope: string;
+        digest: string;
+        challengeHash: string;
+        approvedAt: number | null;
+        confirmationRequestId: string | null;
+      };
+      const scope = JSON.parse(pending.scope);
+      const actor = createHash('sha256')
+        .update('web-bob:owner:jeff')
+        .digest('hex');
+      expect(scope).toMatchObject({
+        ...draft(),
+        actor,
+        draftRequestId: expect.any(String),
+      });
+      expect(scope.actor).not.toBe(input.actor);
+      expect(scope.draftRequestId).not.toBe(input.draftRequestId);
+      expect(pending.approvedAt).toBeNull();
+      expect(pending.confirmationRequestId).toBeNull();
+      expect(pending.challengeHash).not.toBe(input.approvalToken);
+      expect(deliver.mock.calls[0][1]).toMatchObject({
+        actor,
+        contentHash: pending.digest,
+      });
+      vi.setSystemTime(Date.now() + 60_000);
+      const approvedAt = Date.now();
+      await bridge.confirm(confirmation(input));
+      const consumed = db
+        .prepare(
+          'SELECT approvedAt, confirmationRequestId, challengeHash FROM webbob_drafts WHERE id = ?',
+        )
+        .get(input.bridgeDraftId) as {
+        approvedAt: number;
+        confirmationRequestId: string;
+        challengeHash: string;
+      };
+      expect(consumed.approvedAt).toBe(approvedAt);
+      expect(consumed.confirmationRequestId).toEqual(expect.any(String));
+      expect(consumed.confirmationRequestId).not.toBe(scope.draftRequestId);
+      expect(consumed.confirmationRequestId).not.toBe(input.draftRequestId);
+      expect(consumed.challengeHash).toBe('');
+      expect(send.mock.calls[0].slice(0, 3)).toEqual([
+        'bluebubbles',
+        'bb:' + scope.chatGuid,
+        scope.text,
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('fails closed with the default disabled owner-delivery interface', async () => {
+    bridge.close();
+    bridge = open(null);
+    await withHttp(async (post) => {
+      const response = await post('draft', draft());
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain('wbtxt-');
+    });
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+      { readonly: true },
+    );
+    try {
+      const row = db
+        .prepare('SELECT id, state, challengeHash FROM webbob_drafts')
+        .get() as { id: string; state: string; challengeHash: string };
+      expect(row).toMatchObject({
+        state: 'approval_unavailable',
+        challengeHash: '',
+      });
+      await expect(
+        bridge.confirm({
+          bridgeDraftId: row.id,
+          approvalToken: 'wbtxt-' + '0'.repeat(64),
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+    } finally {
+      db.close();
+    }
+    expect(deliver).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes delivery errors and revokes even a token received by a failing delivery hook', async () => {
+    deliver.mockImplementationOnce(async (token, summary) => {
+      delivered.set(summary.bridgeDraftId, token);
+      throw new Error('Delivery secret: ' + token);
+    });
+    await withHttp(async (post) => {
+      const response = await post('draft', draft());
+      expect(response.status).toBe(503);
+      const body = await response.text();
+      const [token, summary] = deliver.mock.calls[0];
+      expect(body).not.toContain(token);
+      expect(body).not.toContain('Delivery secret');
+      expect(
+        (
+          await post('confirm', {
+            bridgeDraftId: summary.bridgeDraftId,
+            approvalToken: token,
+          })
+        ).status,
+      ).toBe(409);
+      expect(
+        (await bridge.status({ bridgeDraftId: summary.bridgeDraftId })).state,
+      ).toBe('approval_unavailable');
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each(['cancel', 'supersede', 'expire', 'restart', 'pause'])(
+    'does not revive owner delivery invalidated by %s while awaiting the hook',
+    async (reason) => {
+      let finish!: () => void;
+      deliver.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const preparing = bridge.prepare(draft());
+      const rejected = expect(preparing).rejects.toThrow();
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+      const [token, summary] = deliver.mock.calls[0];
+      const draftIdentity = { bridgeDraftId: summary.bridgeDraftId };
+      expect((await bridge.status(draftIdentity)).state).toBe(
+        'awaiting_delivery',
+      );
+      await expect(
+        bridge.confirm({ ...draftIdentity, approvalToken: token }),
+      ).rejects.toMatchObject({ status: 409 });
+      if (reason === 'cancel') bridge.cancel(draftIdentity);
+      if (reason === 'pause')
+        setMessagingOutboundPaused({
+          paused: true,
+          changedByChatJid: 'tg:main',
+          reason: 'test',
+        });
+      if (reason === 'supersede') await approval({ ...draft(), revision: 2 });
+      if (reason === 'expire') {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(Date.now() + 5 * 60_000 + 1);
+      }
+      if (reason === 'restart') {
+        bridge.close();
+        bridge = open();
+      }
+      finish();
+      await rejected;
+      await expect(
+        bridge.confirm({ ...draftIdentity, approvalToken: token }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect((await bridge.status(draftIdentity)).state).not.toBe('pending');
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
   it('drafts without sending and records one exact correlated core receipt after separate confirmation', async () => {
     const input = await approval();
     expect(send).not.toHaveBeenCalled();
-    const result = await bridge.confirm(input);
+    const result = await bridge.confirm(confirmation(input));
     expect(result).toMatchObject({ state: 'sent', messageGuid: 'receipt-123' });
     expect(send).toHaveBeenCalledOnce();
     expect(send.mock.calls[0].slice(0, 3)).toEqual([
@@ -122,7 +421,10 @@ describe('Web Bob dedicated Andrea ingress', () => {
       idempotencyKey: result.actionId,
       suppressSenderLabel: true,
     });
-    expect((await bridge.confirm(input)).state).toBe('sent');
+    await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await bridge.status(identity(input))).state).toBe('sent');
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -133,13 +435,15 @@ describe('Web Bob dedicated Andrea ingress', () => {
       error: 0,
       deliveredAt: null,
     });
-    expect((await bridge.confirm(input)).state).toBe('submitted');
+    expect((await bridge.confirm(confirmation(input))).state).toBe('submitted');
     readDelivery.mockResolvedValue({
       state: 'delivery_failed',
       error: 4,
       deliveredAt: null,
     });
-    expect((await bridge.status(input)).state).toBe('delivery_failed');
+    expect((await bridge.status(identity(input))).state).toBe(
+      'delivery_failed',
+    );
     expect(readDelivery.mock.calls[1][0]).toEqual({
       messageGuid: 'receipt-123',
       chatGuid: input.chatGuid,
@@ -150,11 +454,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
     bridge.close();
     bridge = open();
     readDelivery.mockRejectedValue(new Error('unavailable'));
-    expect(await bridge.status(input)).toMatchObject({
+    expect(await bridge.status(identity(input))).toMatchObject({
       state: 'delivery_failed',
       deliveryRefreshUnavailable: true,
     });
-    expect((await bridge.confirm(input)).state).toBe('delivery_failed');
+    await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+      status: 409,
+    });
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -165,41 +471,45 @@ describe('Web Bob dedicated Andrea ingress', () => {
       error: 4,
       deliveredAt: null,
     });
-    const failed = await bridge.confirm(input);
+    const failed = await bridge.confirm(confirmation(input));
     readDelivery.mockResolvedValue({
       state: 'submitted',
       error: 0,
       deliveredAt: null,
     });
-    expect((await bridge.status(input)).state).toBe('delivery_failed');
+    expect((await bridge.status(identity(input))).state).toBe(
+      'delivery_failed',
+    );
     readDelivery.mockResolvedValue({
       state: 'delivered',
       error: 0,
       deliveredAt: 1,
     });
-    expect((await bridge.status(input)).state).toBe('delivery_failed');
+    expect((await bridge.status(identity(input))).state).toBe(
+      'delivery_failed',
+    );
     const checkedAt = (failed.delivery as { checkedAt: number }).checkedAt;
     readDelivery.mockResolvedValue({
       state: 'delivered',
       error: 0,
       deliveredAt: checkedAt + 1,
     });
-    expect((await bridge.status(input)).state).toBe('delivered');
+    expect((await bridge.status(identity(input))).state).toBe('delivered');
     readDelivery.mockResolvedValue({
       state: 'submitted',
       error: 0,
       deliveredAt: null,
     });
-    expect((await bridge.status(input)).state).toBe('delivered');
+    expect((await bridge.status(identity(input))).state).toBe('delivered');
     expect(send).toHaveBeenCalledOnce();
   });
 
   it('coalesces concurrent status reads, rejects altered scope, and never dispatches pending drafts', async () => {
     const input = await approval();
-    expect((await bridge.status(input)).state).toBe('pending');
+    expect((await bridge.status(identity(input))).state).toBe('pending');
     expect(readDelivery).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
-    await bridge.confirm(input);
+    await bridge.confirm(confirmation(input));
     let finish!: (evidence: {
       state: 'delivered';
       error: number;
@@ -211,21 +521,21 @@ describe('Web Bob dedicated Andrea ingress', () => {
           finish = resolve;
         }),
     );
-    const first = bridge.status(input);
-    const second = bridge.status(input);
+    const first = bridge.status(identity(input));
+    const second = bridge.status(identity(input));
     finish({ state: 'delivered', error: 0, deliveredAt: Date.now() });
     expect((await first).state).toBe('delivered');
     expect(await second).toEqual(await first);
     expect(readDelivery).toHaveBeenCalledTimes(2);
     await expect(
-      bridge.status({ ...input, text: 'unrelated' }),
+      bridge.status({ ...identity(input), text: 'unrelated' }),
     ).rejects.toThrow();
     expect(send).toHaveBeenCalledOnce();
   });
 
   it('cannot transfer cached delivery to a replacement core receipt, including a change during inspection', async () => {
     const input = await approval();
-    const result = await bridge.confirm(input);
+    const result = await bridge.confirm(confirmation(input));
     const actionId = result.actionId as string;
     const replace = () => {
       const action = getMessageAction(actionId)!;
@@ -240,11 +550,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
       replace();
       return { state: 'delivered', error: 0, deliveredAt: Date.now() };
     });
-    expect(await bridge.status(input)).toMatchObject({
+    expect(await bridge.status(identity(input))).toMatchObject({
       deliveryRefreshUnavailable: true,
       messageGuid: 'receipt-123',
     });
-    await expect(bridge.status(input)).rejects.toThrow('identity changed');
+    await expect(bridge.status(identity(input))).rejects.toThrow(
+      'identity changed',
+    );
     expect(send).toHaveBeenCalledOnce();
     expect(readDelivery).toHaveBeenCalledTimes(2);
   });
@@ -261,10 +573,15 @@ describe('Web Bob dedicated Andrea ingress', () => {
     'addresses',
     'issuer',
     'audience',
+    'approvedAt',
+    'confirmationRequestId',
+    'requestId',
+    'scope',
+    'confirmation',
   ])('rejects altered %s', async (key) => {
     const input = await approval();
     const altered = {
-      ...input,
+      ...confirmation(input),
       [key]:
         key === 'revision'
           ? 2
@@ -274,31 +591,45 @@ describe('Web Bob dedicated Andrea ingress', () => {
               ? 'b'.repeat(64)
               : 'changed-value',
     };
-    await expect(bridge.confirm(altered)).rejects.toThrow();
+    await expect(bridge.confirm(altered)).rejects.toMatchObject({
+      status: 400,
+    });
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('denies both first-request approval and forged challenge', async () => {
+  it('requires the separately delivered owner token and rejects legacy first-request approval', async () => {
     const input = await approval();
     await expect(
-      bridge.confirm({ ...input, confirmationRequestId: input.draftRequestId }),
-    ).rejects.toThrow();
+      bridge.confirm({
+        ...confirmation(input),
+        confirmationRequestId: input.draftRequestId,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
     await expect(
-      bridge.confirm({ ...input, confirmation: 'yes wbtxt-' + '0'.repeat(32) }),
-    ).rejects.toThrow();
+      bridge.confirm({ bridgeDraftId: input.bridgeDraftId }),
+    ).rejects.toMatchObject({ status: 403 });
     await expect(
-      bridge.confirm({ ...input, approvedAt: Date.now() - 60000 }),
-    ).rejects.toThrow();
+      bridge.confirm({
+        ...confirmation(input),
+        approvalToken: 'wbtxt-' + '0'.repeat(64),
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      bridge.confirm({
+        ...confirmation(input),
+        approvedAt: Date.now() - 60000,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
     expect(send).not.toHaveBeenCalled();
   });
 
   it('cancels and supersedes old cards without granting new authority', async () => {
     const first = await approval();
-    bridge.cancel(first);
-    await expect(bridge.confirm(first)).rejects.toThrow();
+    bridge.cancel(identity(first));
+    await expect(bridge.confirm(confirmation(first))).rejects.toThrow();
     const second = await approval({ ...draft(), draftId: 'draft-456' });
     await approval({ ...draft(), draftId: 'draft-789' });
-    await expect(bridge.confirm(second)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(second))).rejects.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -311,25 +642,32 @@ describe('Web Bob dedicated Andrea ingress', () => {
       text: 'Revised exact owner text.',
     });
     expect(revised.bridgeDraftId).not.toBe(first.bridgeDraftId);
-    expect(revised.confirmation).not.toBe(first.confirmation);
-    const oldStatus = await bridge.status(first);
-    const newStatus = await bridge.status(revised);
+    expect(revised.approvalToken).not.toBe(first.approvalToken);
+    const oldStatus = await bridge.status(identity(first));
+    const newStatus = await bridge.status(identity(revised));
     expect(oldStatus.state).toBe('superseded');
     expect(newStatus.state).toBe('pending');
     expect(newStatus.actionId).not.toBe(oldStatus.actionId);
-    await expect(bridge.confirm(first)).rejects.toMatchObject({ status: 409 });
+    await expect(bridge.confirm(confirmation(first))).rejects.toMatchObject({
+      status: 409,
+    });
     await expect(
-      bridge.confirm({ ...revised, confirmation: first.confirmation }),
+      bridge.confirm({
+        ...confirmation(revised),
+        approvalToken: first.approvalToken,
+      }),
     ).rejects.toMatchObject({ status: 403 });
     expect(send).not.toHaveBeenCalled();
-    expect((await bridge.confirm(revised)).state).toBe('sent');
+    expect((await bridge.confirm(confirmation(revised))).state).toBe('sent');
     expect(send).toHaveBeenCalledOnce();
     expect(send.mock.calls[0].slice(0, 3)).toEqual([
       'bluebubbles',
       'bb:' + revised.chatGuid,
       revised.text,
     ]);
-    await expect(bridge.confirm(first)).rejects.toMatchObject({ status: 409 });
+    await expect(bridge.confirm(confirmation(first))).rejects.toMatchObject({
+      status: 409,
+    });
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -348,13 +686,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
           text: 'Rejected replacement text.',
         }),
       ).rejects.toMatchObject({ status: 409 });
-      expect((await bridge.status(current)).state).toBe('pending');
+      expect((await bridge.status(identity(current))).state).toBe('pending');
     }
     expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
       1,
     );
     expect(send).not.toHaveBeenCalled();
-    expect((await bridge.confirm(current)).state).toBe('sent');
+    expect((await bridge.confirm(confirmation(current))).state).toBe('sent');
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -371,7 +709,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
     const current = await approval({ ...draft(), revision: 3 });
     finish(['+12025550102']);
     await rejected;
-    expect((await bridge.status(current)).state).toBe('pending');
+    expect((await bridge.status(identity(current))).state).toBe('pending');
     expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
       1,
     );
@@ -385,11 +723,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
       revised = await approval({ ...draft(), revision: 2 });
       return ['+12025550102'];
     });
-    await expect(bridge.confirm(first)).rejects.toMatchObject({ status: 409 });
-    expect((await bridge.status(first)).state).toBe('superseded');
-    expect((await bridge.status(revised)).state).toBe('pending');
+    await expect(bridge.confirm(confirmation(first))).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await bridge.status(identity(first))).state).toBe('superseded');
+    expect((await bridge.status(identity(revised))).state).toBe('pending');
     expect(send).not.toHaveBeenCalled();
-    expect((await bridge.confirm(revised)).state).toBe('sent');
+    expect((await bridge.confirm(confirmation(revised))).state).toBe('sent');
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -400,21 +740,21 @@ describe('Web Bob dedicated Andrea ingress', () => {
       conversationId: 'conversation-456',
     });
     const revised = await approval({ ...draft(), revision: 4 });
-    expect((await bridge.status(first)).state).toBe('superseded');
-    expect((await bridge.status(revised)).state).toBe('pending');
-    expect((await bridge.status(independent)).state).toBe('pending');
+    expect((await bridge.status(identity(first))).state).toBe('superseded');
+    expect((await bridge.status(identity(revised))).state).toBe('pending');
+    expect((await bridge.status(identity(independent))).state).toBe('pending');
     expect(send).not.toHaveBeenCalled();
   });
 
   it('does not revive cancelled revisions through equal or lower preparations', async () => {
     const current = await approval({ ...draft(), revision: 3 });
-    bridge.cancel(current);
+    bridge.cancel(identity(current));
     for (const revision of [3, 2]) {
       await expect(
         bridge.prepare({ ...draft(), revision }),
       ).rejects.toMatchObject({ status: 409 });
     }
-    expect((await bridge.status(current)).state).toBe('cancelled');
+    expect((await bridge.status(identity(current))).state).toBe('cancelled');
     expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
       1,
     );
@@ -449,23 +789,27 @@ describe('Web Bob dedicated Andrea ingress', () => {
     }
     bridge = open();
     const legacy = { ...input, bridgeDraftId: legacyId };
-    expect((await bridge.status(legacy)).state).toBe('expired');
-    await expect(bridge.confirm(legacy)).rejects.toMatchObject({ status: 409 });
+    expect((await bridge.status(identity(legacy))).state).toBe('expired');
+    await expect(bridge.confirm(confirmation(legacy))).rejects.toMatchObject({
+      status: 409,
+    });
     for (const revision of [3, 2]) {
       await expect(
         bridge.prepare({ ...draft(), revision }),
       ).rejects.toMatchObject({ status: 409 });
     }
     const revised = await approval({ ...draft(), revision: 4 });
-    expect((await bridge.status(revised)).state).toBe('pending');
-    expect((await bridge.status(legacy)).state).toBe('expired');
-    await expect(bridge.confirm(legacy)).rejects.toMatchObject({ status: 409 });
+    expect((await bridge.status(identity(revised))).state).toBe('pending');
+    expect((await bridge.status(identity(legacy))).state).toBe('expired');
+    await expect(bridge.confirm(confirmation(legacy))).rejects.toMatchObject({
+      status: 409,
+    });
     expect(send).not.toHaveBeenCalled();
   });
 
   it('preserves a consumed revision receipt when a higher revision is prepared and confirmed', async () => {
     const first = await approval();
-    const originalReceipt = await bridge.confirm(first);
+    const originalReceipt = await bridge.confirm(confirmation(first));
     expect(originalReceipt).toMatchObject({
       state: 'sent',
       messageGuid: 'receipt-123',
@@ -481,15 +825,19 @@ describe('Web Bob dedicated Andrea ingress', () => {
       actionId: originalReceipt.actionId,
       messageGuid: 'receipt-123',
     };
-    expect(await bridge.status(first)).toMatchObject(originalIdentity);
-    expect(await bridge.confirm(first)).toMatchObject(originalIdentity);
-    expect((await bridge.status(revised)).state).toBe('pending');
+    expect(await bridge.status(identity(first))).toMatchObject(
+      originalIdentity,
+    );
+    await expect(bridge.confirm(confirmation(first))).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await bridge.status(identity(revised))).state).toBe('pending');
     expect(send).toHaveBeenCalledOnce();
     send.mockResolvedValueOnce({
       platformMessageId: 'receipt-456',
       threadId: 'bb:' + revised.chatGuid,
     });
-    const revisedReceipt = await bridge.confirm(revised);
+    const revisedReceipt = await bridge.confirm(confirmation(revised));
     expect(revisedReceipt).toMatchObject({
       state: 'sent',
       messageGuid: 'receipt-456',
@@ -501,7 +849,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
       'bb:' + revised.chatGuid,
       revised.text,
     ]);
-    expect(await bridge.confirm(first)).toMatchObject(originalIdentity);
+    await expect(bridge.confirm(confirmation(first))).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(await bridge.status(identity(first))).toMatchObject(
+      originalIdentity,
+    );
     expect(send).toHaveBeenCalledTimes(2);
   });
 
@@ -520,7 +873,9 @@ describe('Web Bob dedicated Andrea ingress', () => {
     async (state) => {
       await seedHistory(state, Date.now() - 60_000);
       const input = await approval();
-      expect(await bridge.status(input)).toMatchObject({ state: 'pending' });
+      expect(await bridge.status(identity(input))).toMatchObject({
+        state: 'pending',
+      });
       expect(
         listMessageActionsForGroup({ groupFolder: 'webbob' }),
       ).toHaveLength(1);
@@ -561,13 +916,21 @@ describe('Web Bob dedicated Andrea ingress', () => {
     const first = await approval();
     await seedHistory('pending', Date.now() + 60_000, 9999);
     const second = await approval({ ...draft(), revision: 2 });
-    expect(await bridge.status(first)).toMatchObject({ state: 'superseded' });
-    expect(await bridge.status(second)).toMatchObject({ state: 'pending' });
-    await expect(bridge.confirm(first)).rejects.toMatchObject({ status: 409 });
+    expect(await bridge.status(identity(first))).toMatchObject({
+      state: 'superseded',
+    });
+    expect(await bridge.status(identity(second))).toMatchObject({
+      state: 'pending',
+    });
+    await expect(bridge.confirm(confirmation(first))).rejects.toMatchObject({
+      status: 409,
+    });
     await expect(
       bridge.prepare({ ...draft(), conversationId: 'unrelated-conversation' }),
     ).rejects.toMatchObject({ status: 503 });
-    expect(await bridge.status(second)).toMatchObject({ state: 'pending' });
+    expect(await bridge.status(identity(second))).toMatchObject({
+      state: 'pending',
+    });
     expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
       2,
     );
@@ -578,33 +941,51 @@ describe('Web Bob dedicated Andrea ingress', () => {
     const input = await approval();
     bridge.close();
     bridge = open();
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
 
   it('preserves consumed uncertain delivery across restart and never resends', async () => {
     const input = await approval();
     send.mockRejectedValue(new Error('lost receipt'));
-    expect((await bridge.confirm(input)).state).toBe('delivery_unconfirmed');
+    expect((await bridge.confirm(confirmation(input))).state).toBe(
+      'delivery_unconfirmed',
+    );
     bridge.close();
     bridge = open();
-    expect((await bridge.confirm(input)).state).toBe('delivery_unconfirmed');
+    await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await bridge.status(identity(input))).state).toBe(
+      'delivery_unconfirmed',
+    );
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it('concurrent approvals issue only one provider call', async () => {
+  it('rejects concurrent approval replay and issues only one provider call', async () => {
     const input = await approval();
-    await Promise.all([bridge.confirm(input), bridge.confirm(input)]);
+    const results = await Promise.allSettled([
+      bridge.confirm(confirmation(input)),
+      bridge.confirm(confirmation(input)),
+    ]);
+    expect(
+      results.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({ status: 409 }),
+      }),
+    ]);
     expect(send).toHaveBeenCalledOnce();
   });
 
   it('cancellation during membership refresh wins before durable consumption', async () => {
     const input = await approval();
     resolve.mockImplementationOnce(async () => {
-      bridge.cancel(input);
+      bridge.cancel(identity(input));
       return ['+12025550102'];
     });
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -631,7 +1012,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
   it('revalidates membership at confirmation', async () => {
     const input = await approval();
     resolve.mockResolvedValue(['+12025550103']);
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -640,16 +1021,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
     async (boundary) => {
       vi.useFakeTimers({ toFake: ['Date'] });
       const input = await approval();
-      vi.setSystemTime(
-        Date.now() + (boundary === 'card' ? 5 * 60_000 : 30_000) - 1,
-      );
-      if (boundary === 'card') input.approvedAt = Date.now();
+      if (boundary === 'card') vi.setSystemTime(Date.now() + 5 * 60_000 - 1);
       resolve.mockImplementationOnce(async () => {
-        vi.setSystemTime(Date.now() + 2);
+        vi.setSystemTime(Date.now() + (boundary === 'card' ? 2 : 30_001));
         return ['+12025550102'];
       });
-      await expect(bridge.confirm(input)).rejects.toThrow();
-      expect((await bridge.status(input)).state).toBe('pending');
+      await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
+      expect((await bridge.status(identity(input))).state).toBe('pending');
       expect(send).not.toHaveBeenCalled();
     },
   );
@@ -661,13 +1039,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
       changedByChatJid: 'tg:main',
       reason: 'test',
     });
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     setMessagingOutboundPaused({
       paused: false,
       changedByChatJid: 'tg:main',
       reason: 'test',
     });
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -703,7 +1081,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
       actionId: string;
     };
     updateMessageAction(row.actionId, { draftText: 'altered' });
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     expect(db.prepare('SELECT state FROM webbob_drafts').get()).toEqual({
       state: 'consumed',
     });
@@ -714,7 +1092,9 @@ describe('Web Bob dedicated Andrea ingress', () => {
   it('does not claim sent from a missing provider receipt', async () => {
     const input = await approval();
     send.mockResolvedValue({});
-    expect((await bridge.confirm(input)).state).toBe('delivery_unconfirmed');
+    expect((await bridge.confirm(confirmation(input))).state).toBe(
+      'delivery_unconfirmed',
+    );
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -737,13 +1117,16 @@ describe('Web Bob dedicated Andrea ingress', () => {
       });
       return { platformMessageId: 'bb:actual-channel-receipt' };
     });
-    expect(await bridge.confirm(input)).toMatchObject({
+    expect(await bridge.confirm(confirmation(input))).toMatchObject({
       state: 'sent',
       messageGuid: 'bb:actual-channel-receipt',
     });
     bridge.close();
     bridge = open();
-    expect((await bridge.confirm(input)).state).toBe('sent');
+    await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await bridge.status(identity(input))).state).toBe('sent');
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -775,8 +1158,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
         });
         return { platformMessageId: 'bb:actual-channel-receipt' };
       });
-      expect((await bridge.confirm(input)).state).toBe('delivery_unconfirmed');
-      await bridge.confirm(input);
+      expect((await bridge.confirm(confirmation(input))).state).toBe(
+        'delivery_unconfirmed',
+      );
+      await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+        status: 409,
+      });
       expect(send).toHaveBeenCalledOnce();
     },
   );
@@ -787,12 +1174,14 @@ describe('Web Bob dedicated Andrea ingress', () => {
       platformMessageId: 'receipt-123',
       threadId: 'bb:iMessage;-;+12025550103',
     });
-    const result = await bridge.confirm(input);
+    const result = await bridge.confirm(confirmation(input));
     expect(result.state).toBe('delivery_unconfirmed');
     expect(getMessageAction(result.actionId as string)?.sendStatus).toBe(
       'delivery_unverified',
     );
-    await bridge.confirm(input);
+    await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+      status: 409,
+    });
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -812,7 +1201,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
       };
     });
     try {
-      expect((await bridge.confirm(input)).state).toBe('sent');
+      expect((await bridge.confirm(confirmation(input))).state).toBe('sent');
     } finally {
       db.close();
     }
@@ -821,27 +1210,27 @@ describe('Web Bob dedicated Andrea ingress', () => {
   it('late cancellation cannot relabel a consumed or sent action as cancelled', async () => {
     const input = await approval();
     send.mockImplementation(async () => {
-      expect(bridge.cancel(input).state).toBe('delivery_unconfirmed');
+      expect(bridge.cancel(identity(input)).state).toBe('delivery_unconfirmed');
       return {
         platformMessageId: 'receipt-123',
         threadId: 'bb:iMessage;-;+12025550102',
       };
     });
-    await bridge.confirm(input);
-    expect(bridge.cancel(input).state).toBe('sent');
+    await bridge.confirm(confirmation(input));
+    expect(bridge.cancel(identity(input)).state).toBe('sent');
     expect(send).toHaveBeenCalledOnce();
   });
 
   it('expired cards, pre-draft timestamps and unavailable persistence cannot dispatch', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
     const input = await approval();
     await expect(
-      bridge.confirm({ ...input, approvedAt: input.approvedAt - 1000 }),
-    ).rejects.toThrow();
-    await expect(
-      bridge.confirm(input, Number(input.approvedAt) + 5 * 60_000 + 1),
-    ).rejects.toThrow();
+      bridge.confirm({ ...confirmation(input), approvedAt: Date.now() - 1000 }),
+    ).rejects.toMatchObject({ status: 400 });
+    vi.setSystemTime(Date.now() + 5 * 60_000 + 1);
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     bridge.close();
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     bridge = open();
     expect(send).not.toHaveBeenCalled();
   });
@@ -855,7 +1244,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
       .prepare('SELECT scope, digest FROM webbob_drafts')
       .get() as { scope: string; digest: string };
     db.prepare('UPDATE webbob_drafts SET digest = ?').run('a'.repeat(64));
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     const tampered = JSON.parse(original.scope);
     tampered.text = 'Tampered owner bytes.';
     db.prepare('UPDATE webbob_drafts SET scope = ?, digest = ?').run(
@@ -863,9 +1252,45 @@ describe('Web Bob dedicated Andrea ingress', () => {
       original.digest,
     );
     db.close();
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
+
+  it.each(['draft id', 'revision', 'content hash'])(
+    'binds the owner token to the stored %s even when the scope digest is recomputed',
+    async (changed) => {
+      const input = await approval();
+      const db = new (await import('better-sqlite3')).default(
+        path.join(folder, 'bridge.db'),
+      );
+      let bridgeDraftId = input.bridgeDraftId;
+      try {
+        const row = db
+          .prepare('SELECT scope FROM webbob_drafts WHERE id = ?')
+          .get(bridgeDraftId) as { scope: string };
+        const scope = JSON.parse(row.scope);
+        if (changed === 'draft id') bridgeDraftId = 'f'.repeat(64);
+        if (changed === 'revision') scope.revision += 1;
+        if (changed === 'content hash')
+          scope.text = 'Changed exact message bytes.';
+        const serialized = JSON.stringify(scope);
+        db.prepare(
+          'UPDATE webbob_drafts SET id = ?, scope = ?, digest = ? WHERE id = ?',
+        ).run(
+          bridgeDraftId,
+          serialized,
+          createHash('sha256').update(serialized).digest('hex'),
+          input.bridgeDraftId,
+        );
+      } finally {
+        db.close();
+      }
+      await expect(
+        bridge.confirm({ bridgeDraftId, approvalToken: input.approvalToken }),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects non-loopback peers and forwarded proxy headers at HTTP ingress', async () => {
     expect(isWebBobLoopbackAddress('127.0.0.1')).toBe(true);
