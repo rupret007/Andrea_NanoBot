@@ -62,10 +62,26 @@ consumption. Revisions cannot transfer an old challenge to edited content.
 The 10,000-draft limit counts pending decisions and challenges awaiting owner
 delivery; elapsed drafts are expired before enforcing it. Unfinished adapter
 calls are separately capped at 10,000, including calls already superseded.
-At most 10,000 terminal drafts of all states are retained for receipt inspection;
-older records and their delivery evidence are pruned on admission, cancellation,
-consumption and startup. SQLite reuses the freed pages. Failed in-memory delivery
-diagnostics have the same 10,000-record cap.
+At most 10,000 settled terminal drafts of all states are retained for receipt
+inspection; older records and their delivery evidence are pruned on admission,
+cancellation, consumption, settlement and startup. Their bridge-owned core
+message actions and associated outcomes are also deleted. Cleanup verifies the
+dedicated source namespace and server-derived action ID, leaving other core
+actions untouched. It reconciles against committed bridge records under the
+bridge write lock, including after a failed bridge insert and on startup after
+an interrupted write or cleanup. SQLite reuses the freed pages. Failed in-memory
+delivery diagnostics have the same 10,000-record cap.
+
+Up to 32 additional consumed approvals are durably reserved while provider
+dispatch and receipt persistence settle. Pruning cannot remove these drafts,
+their core actions or outcomes. The reservation limit is checked atomically
+with token consumption; a full limit returns 503 without consuming another
+approval. Unresolved reservations survive restart and continue counting against
+the limit, since an old provider call may still be running. A process crash can
+therefore leave capacity occupied indefinitely; restart does not automatically
+release uncertain reservations or retry sends. The total retained bridge-owned
+core actions and outcomes are bounded by the pending, settled terminal and
+reservation limits.
 
 A separate persistent registry retains the highest accepted revision for each
 owner/conversation/epoch/draft identity, including legacy rows before pruning.

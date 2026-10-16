@@ -22,6 +22,7 @@ import { secureEqual } from './secure-equal.js';
 import { mintWebBobDispatchApproval } from './web-bob-approval.js';
 import {
   WebBobDraftRetention,
+  WEB_BOB_IN_FLIGHT_LIMIT,
   WEB_BOB_TERMINAL_DRAFT_LIMIT,
 } from './web-bob-draft-retention.js';
 import {
@@ -253,6 +254,15 @@ export class WebBobBridge {
     ) {
       this.db.exec('ALTER TABLE webbob_drafts ADD COLUMN approvedAt INTEGER');
     }
+    if (
+      !(this.db.pragma('table_info(webbob_drafts)') as { name: string }[]).some(
+        (column) => column.name === 'dispatchInFlight',
+      )
+    ) {
+      this.db.exec(
+        'ALTER TABLE webbob_drafts ADD COLUMN dispatchInFlight INTEGER NOT NULL DEFAULT 0 CHECK (dispatchInFlight IN (0, 1))',
+      );
+    }
     this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_delivery (
       draftId TEXT PRIMARY KEY, evidence TEXT NOT NULL
     )`);
@@ -284,6 +294,10 @@ export class WebBobBridge {
       )
       .run();
     this.db.transaction(() => this.retention.prune(Date.now())).immediate();
+    // Unsettled dispatch reservations deliberately survive restart. Their
+    // fixed capacity fails closed even when a crashed provider call cannot be
+    // proven settled; an overlapping instance must not prune a live send.
+    this.retention.reconcileCoreActions();
   }
 
   close(): void {
@@ -426,6 +440,7 @@ export class WebBobBridge {
         this.retention.prune(now);
       })
       .immediate();
+    this.retention.reconcileCoreActions();
     for (const row of this.staged.values()) {
       if (
         row.state === 'awaiting_delivery' &&
@@ -529,6 +544,15 @@ export class WebBobBridge {
       }
       // Delivery errors can contain secret bytes, including bridge error types.
       // Never forward any adapter exception or return the token as a fallback.
+      try {
+        // Core creation precedes the bridge insert in a separate database.
+        // Reconcile only after the bridge transaction rolled back. Startup
+        // repeats this repair if the process or cleanup itself failed.
+        if (!this.closed) this.retention.reconcileCoreActions();
+      } catch {
+        // The next admission/startup must reconcile before another core write.
+        // Cleanup errors must not expose adapter or persisted token bytes.
+      }
       throw new WebBobBridgeError(
         503,
         'Owner approval delivery is unavailable.',
@@ -593,6 +617,7 @@ export class WebBobBridge {
       .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
       .get(row.id) as StoredDraft;
     this.db.transaction(() => this.retention.prune(Date.now())).immediate();
+    this.retention.reconcileCoreActions();
     return this.receipt(current);
   }
 
@@ -823,77 +848,109 @@ export class WebBobBridge {
     );
     // Recheck under the write lock after the membership read yielded. Cancel,
     // replacement, restart, concurrent approval and disk errors all fail closed.
-    const consumed = this.db
-      .prepare(
-        "UPDATE webbob_drafts SET state = 'consumed', challengeHash = '', confirmationRequestId = ?, approvedAt = ? WHERE id = ? AND state = 'pending' AND serverEpoch = ? AND expires > ? AND digest = ? AND scope = ? AND challengeHash = ?",
-      )
-      .run(
-        confirmationRequestId,
-        approvedAt,
-        row.id,
-        this.epoch,
-        validatedAt,
-        row.digest,
-        row.scope,
-        row.challengeHash,
-      );
-    requireValue(
-      consumed.changes,
-      409,
-      'This draft confirmation is no longer current.',
-    );
-    row.state = 'consumed';
-    this.db.transaction(() => this.retention.prune(Date.now())).immediate();
-    const action = getMessageAction(row.actionId);
-    requireValue(
-      action &&
-        action.draftText === scope.text &&
-        action.presentationChatJid === 'webbob:' + scope.conversationId &&
-        JSON.parse(action.targetConversationJson).chatJid ===
-          'bb:' + scope.chatGuid,
-      409,
-    );
-    const webBobApproval = mintWebBobDispatchApproval(action);
-    await executeExplicitlyAuthorizedMessageAction(row.actionId, {
-      groupFolder: 'webbob',
-      channel: 'bluebubbles',
-      chatJid: action.presentationChatJid!,
-      ownerAuthorizationAt: authorizationAt,
-      webBobApproval,
-      sendToTarget: async (channel, chatJid, text, options) => {
-        validateFreshness();
+    this.db
+      .transaction(() => {
+        this.assertCurrentEpoch();
+        const active = this.db
+          .prepare(
+            'SELECT count(*) AS n FROM webbob_drafts WHERE dispatchInFlight = 1',
+          )
+          .get() as { n: number };
         requireValue(
-          channel === 'bluebubbles' &&
-            chatJid === 'bb:' + scope.chatGuid &&
-            text === scope.text,
-          403,
+          active.n < WEB_BOB_IN_FLIGHT_LIMIT,
+          503,
+          'Web Bob bridge in-flight approval limit reached.',
         );
+        const consumed = this.db
+          .prepare(
+            "UPDATE webbob_drafts SET state = 'consumed', dispatchInFlight = 1, challengeHash = '', confirmationRequestId = ?, approvedAt = ? WHERE id = ? AND state = 'pending' AND serverEpoch = ? AND expires > ? AND digest = ? AND scope = ? AND challengeHash = ?",
+          )
+          .run(
+            confirmationRequestId,
+            approvedAt,
+            row.id,
+            this.epoch,
+            validatedAt,
+            row.digest,
+            row.scope,
+            row.challengeHash,
+          );
         requireValue(
-          validateMessagingOutboundAuthorizationFence({
-            authorizationAt,
-            pauseGeneration: row.pauseGeneration,
-          }).ok,
+          consumed.changes,
           409,
+          'This draft confirmation is no longer current.',
         );
-        const receipt = await this.deps.sendToTarget(
-          channel,
-          chatJid,
-          text,
-          options,
-        );
-        if (receipt.threadId !== chatJid) {
-          throw new ChannelDeliveryUnverifiedError({
-            outcome: 'unknown',
-            confirmedReceiptIds: receipt.platformMessageId
-              ? [receipt.platformMessageId]
-              : [],
-            confirmedReceiptCount: receipt.platformMessageId ? 1 : 0,
-          });
-        }
-        return receipt;
-      },
-    });
-    return this.refreshReceipt(row);
+        this.retention.prune(Date.now());
+      })
+      .immediate();
+    row.state = 'consumed';
+    try {
+      this.retention.reconcileCoreActions();
+      const action = getMessageAction(row.actionId);
+      requireValue(
+        action &&
+          action.draftText === scope.text &&
+          action.presentationChatJid === 'webbob:' + scope.conversationId &&
+          JSON.parse(action.targetConversationJson).chatJid ===
+            'bb:' + scope.chatGuid,
+        409,
+      );
+      const webBobApproval = mintWebBobDispatchApproval(action);
+      await executeExplicitlyAuthorizedMessageAction(row.actionId, {
+        groupFolder: 'webbob',
+        channel: 'bluebubbles',
+        chatJid: action.presentationChatJid!,
+        ownerAuthorizationAt: authorizationAt,
+        webBobApproval,
+        sendToTarget: async (channel, chatJid, text, options) => {
+          validateFreshness();
+          requireValue(
+            channel === 'bluebubbles' &&
+              chatJid === 'bb:' + scope.chatGuid &&
+              text === scope.text,
+            403,
+          );
+          requireValue(
+            validateMessagingOutboundAuthorizationFence({
+              authorizationAt,
+              pauseGeneration: row.pauseGeneration,
+            }).ok,
+            409,
+          );
+          const receipt = await this.deps.sendToTarget(
+            channel,
+            chatJid,
+            text,
+            options,
+          );
+          if (receipt.threadId !== chatJid) {
+            throw new ChannelDeliveryUnverifiedError({
+              outcome: 'unknown',
+              confirmedReceiptIds: receipt.platformMessageId
+                ? [receipt.platformMessageId]
+                : [],
+              confirmedReceiptCount: receipt.platformMessageId ? 1 : 0,
+            });
+          }
+          return receipt;
+        },
+      });
+      return await this.refreshReceipt(row);
+    } finally {
+      if (!this.closed) {
+        this.db
+          .transaction(() => {
+            this.db
+              .prepare(
+                'UPDATE webbob_drafts SET dispatchInFlight = 0 WHERE id = ?',
+              )
+              .run(row.id);
+            this.retention.prune(Date.now());
+          })
+          .immediate();
+        this.retention.reconcileCoreActions();
+      }
+    }
   }
 
   async handleRequest(

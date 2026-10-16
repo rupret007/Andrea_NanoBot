@@ -15,7 +15,10 @@ import {
   storeMessageDirect,
   updateMessageAction,
 } from './db.js';
-import { executeExplicitlyAuthorizedMessageAction } from './message-actions.js';
+import {
+  createOrRefreshMessageActionFromDraft,
+  executeExplicitlyAuthorizedMessageAction,
+} from './message-actions.js';
 import type {
   OwnerChallengeDelivery,
   OwnerChallengeSummary,
@@ -114,19 +117,42 @@ describe('Web Bob dedicated Andrea ingress', () => {
       path.join(folder, 'bridge.db'),
     );
     try {
+      const input = draft();
+      // History represents delivered drafts in both stores, with actual core
+      // actions and outcomes rather than empty references that bypass cleanup.
+      db.function('historyActionId', (id: string, conversationId: string) => {
+        return createOrRefreshMessageActionFromDraft({
+          groupFolder: 'webbob',
+          presentationChannel: 'bluebubbles',
+          presentationChatJid: 'webbob:' + conversationId,
+          sourceType: 'manual_prompt',
+          sourceKey: 'webbob:inbound:' + id,
+          sourceSummary: 'Exact Web Bob owner draft',
+          draftProvenance: 'owner_literal',
+          draftText: input.text,
+          forceApproval: true,
+          targetChannelOverride: 'bluebubbles',
+          targetOverride: {
+            kind: 'external_thread',
+            chatJid: 'bb:' + input.chatGuid,
+            isGroup: false,
+          },
+        }).messageActionId;
+      });
       db.prepare(
         `WITH RECURSIVE entries(n) AS (
           VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < ?
         )
         INSERT INTO webbob_drafts
           (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId, confirmationRequestId)
-        SELECT CAST(n AS TEXT), json_set(?, '$.conversationId', 'history-' || n),
-          '', '', '', ?, 0, ?, '', NULL
+        SELECT printf('%064x', n), json_set(?, '$.conversationId', 'history-' || n),
+          '', '', '', ?, 0, ?,
+          historyActionId(printf('%064x', n), 'history-' || n), NULL
         FROM entries`,
       ).run(
         count,
         JSON.stringify({
-          ...draft(),
+          ...input,
           actor: createHash('sha256')
             .update('web-bob:owner:jeff')
             .digest('hex'),
@@ -134,6 +160,23 @@ describe('Web Bob dedicated Andrea ingress', () => {
         expires,
         state,
       );
+    } finally {
+      db.close();
+    }
+  };
+  const expectSettledConsent = async (bridgeDraftId: unknown) => {
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+      { readonly: true },
+    );
+    try {
+      expect(
+        db
+          .prepare(
+            'SELECT state, dispatchInFlight FROM webbob_drafts WHERE id = ?',
+          )
+          .get(bridgeDraftId),
+      ).toEqual({ state: 'consumed', dispatchInFlight: 0 });
     } finally {
       db.close();
     }
@@ -463,6 +506,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
       state: 'delivery_failed',
       deliveryRefreshUnavailable: true,
     });
+    await expectSettledConsent(input.bridgeDraftId);
     await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
       status: 409,
     });
@@ -865,11 +909,23 @@ describe('Web Bob dedicated Andrea ingress', () => {
 
   it('does not create a core action when active pending capacity is already full', async () => {
     await seedHistory('pending', Date.now() + 60_000);
+    const existingActionIds = listMessageActionsForGroup({
+      groupFolder: 'webbob',
+      includeSent: true,
+      limit: 10002,
+    }).map((action) => action.messageActionId);
+    expect(existingActionIds).toHaveLength(10000);
     await expect(bridge.prepare(draft())).rejects.toMatchObject({
       status: 503,
       message: 'Web Bob bridge pending draft limit reached.',
     });
-    expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toEqual([]);
+    expect(
+      listMessageActionsForGroup({
+        groupFolder: 'webbob',
+        includeSent: true,
+        limit: 10002,
+      }).map((action) => action.messageActionId),
+    ).toEqual(existingActionIds);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -882,8 +938,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
         state: 'pending',
       });
       expect(
-        listMessageActionsForGroup({ groupFolder: 'webbob' }),
-      ).toHaveLength(1);
+        listMessageActionsForGroup({
+          groupFolder: 'webbob',
+          includeSent: true,
+          limit: 10002,
+        }),
+      ).toHaveLength(10001);
       // Retaining terminal identity prevents replay even when it no longer
       // consumes pending capacity.
       await expect(
@@ -936,9 +996,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(await bridge.status(identity(second))).toMatchObject({
       state: 'pending',
     });
-    expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toHaveLength(
-      2,
-    );
+    expect(
+      listMessageActionsForGroup({
+        groupFolder: 'webbob',
+        includeSent: true,
+        limit: 10002,
+      }),
+    ).toHaveLength(10001);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -956,6 +1020,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect((await bridge.confirm(confirmation(input))).state).toBe(
       'delivery_unconfirmed',
     );
+    await expectSettledConsent(input.bridgeDraftId);
     bridge.close();
     bridge = open();
     await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
@@ -1087,8 +1152,11 @@ describe('Web Bob dedicated Andrea ingress', () => {
     };
     updateMessageAction(row.actionId, { draftText: 'altered' });
     await expect(bridge.confirm(confirmation(input))).rejects.toThrow();
-    expect(db.prepare('SELECT state FROM webbob_drafts').get()).toEqual({
+    expect(
+      db.prepare('SELECT state, dispatchInFlight FROM webbob_drafts').get(),
+    ).toEqual({
       state: 'consumed',
+      dispatchInFlight: 0,
     });
     db.close();
     expect(send).not.toHaveBeenCalled();

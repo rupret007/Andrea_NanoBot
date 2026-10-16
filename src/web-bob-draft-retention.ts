@@ -2,8 +2,11 @@ import { createHash } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
 
+import { reconcileWebBobMessageActions } from './db.js';
+
 export const WEB_BOB_TERMINAL_DRAFT_LIMIT = 10000;
 export const WEB_BOB_REVISION_LINEAGE_LIMIT = 20000;
+export const WEB_BOB_IN_FLIGHT_LIMIT = 32;
 
 interface RevisionScope {
   actor: string;
@@ -187,9 +190,11 @@ export class WebBobDraftRetention {
         .prepare(
           `DELETE FROM webbob_drafts
            WHERE state NOT IN ('pending', 'awaiting_delivery')
+             AND dispatchInFlight = 0
              AND rowid NOT IN (
                SELECT rowid FROM webbob_drafts
                WHERE state NOT IN ('pending', 'awaiting_delivery')
+                 AND dispatchInFlight = 0
                ORDER BY expires DESC, rowid DESC LIMIT ?
              )`,
         )
@@ -205,5 +210,23 @@ export class WebBobDraftRetention {
     };
     if (this.db.inTransaction) prune();
     else this.db.transaction(prune).immediate();
+  }
+
+  /** Only reconcile after bridge mutations have committed. A separate bridge
+   * write lock prevents another instance's core insert from looking orphaned
+   * before its bridge insert commits. A crash between stores is repaired here
+   * on startup; rolling back this read-only bridge transaction cannot restore
+   * drafts whose core records have already been deleted. */
+  reconcileCoreActions(): void {
+    if (this.db.inTransaction)
+      throw new Error('Core reconciliation requires committed bridge records.');
+    this.db
+      .transaction(() => {
+        const retained = this.db
+          .prepare('SELECT id, actionId FROM webbob_drafts')
+          .all() as { id: string; actionId: string }[];
+        reconcileWebBobMessageActions(retained);
+      })
+      .immediate();
   }
 }
