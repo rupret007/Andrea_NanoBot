@@ -9,6 +9,7 @@ import {
   _closeDatabase,
   _initTestDatabase,
   getMessageAction,
+  listMessageActionsForGroup,
   storeChatMetadata,
   storeMessageDirect,
   updateMessageAction,
@@ -81,6 +82,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
     bridge = open();
   });
   afterEach(() => {
+    vi.useRealTimers();
     bridge.close();
     _closeDatabase();
     fs.rmSync(folder, { recursive: true, force: true });
@@ -281,6 +283,27 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('does not create a core action when draft history is already full', async () => {
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      db.exec(`
+        WITH RECURSIVE entries(n) AS (
+          VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < 10000
+        )
+        INSERT INTO webbob_drafts
+        SELECT CAST(n AS TEXT), '', '', '', '', 0, 0, 'expired', '', NULL
+        FROM entries
+      `);
+      await expect(bridge.prepare(draft())).rejects.toThrow('history limit');
+      expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toEqual([]);
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
   it('invalidates pending challenges on service restart', async () => {
     const input = await approval();
     bridge.close();
@@ -341,6 +364,25 @@ describe('Web Bob dedicated Andrea ingress', () => {
     await expect(bridge.confirm(input)).rejects.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
+
+  it.each(['approval', 'card'])(
+    'rejects %s expiry while the membership lookup is pending',
+    async (boundary) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const input = await approval();
+      vi.setSystemTime(
+        Date.now() + (boundary === 'card' ? 5 * 60_000 : 30_000) - 1,
+      );
+      if (boundary === 'card') input.approvedAt = Date.now();
+      resolve.mockImplementationOnce(async () => {
+        vi.setSystemTime(Date.now() + 2);
+        return ['+12025550102'];
+      });
+      await expect(bridge.confirm(input)).rejects.toThrow();
+      expect((await bridge.status(input)).state).toBe('pending');
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects pause and pause-then-resume after the card', async () => {
     const input = await approval();
@@ -682,4 +724,38 @@ describe('Web Bob dedicated Andrea ingress', () => {
     }
     expect(send).not.toHaveBeenCalled();
   });
+
+  it.each([
+    'origin',
+    'x-forwarded-for',
+    'x-forwarded-host',
+    'x-real-ip',
+    'forwarded',
+  ])(
+    'rejects a present but empty %s header at HTTP ingress',
+    async (header) => {
+      const response = {
+        statusCode: 0,
+        writeHead(status: number) {
+          this.statusCode = status;
+        },
+        end: vi.fn(),
+      };
+      await bridge.handleRequest(
+        {
+          method: 'GET',
+          url: '/web-bob/v1/health',
+          headers: {
+            authorization: 'Bearer ' + config.token,
+            host: '127.0.0.1',
+            [header]: '',
+          },
+          socket: { remoteAddress: '127.0.0.1', localAddress: '127.0.0.1' },
+        } as unknown as http.IncomingMessage,
+        response as unknown as http.ServerResponse,
+      );
+      expect(response.statusCode).toBe(401);
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 });

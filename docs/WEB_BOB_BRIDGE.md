@@ -22,6 +22,8 @@ minutes. Separate confirmation carries the challenge, a new request ID and a
 fresh arrival timestamp. Cancellation, replacement, service restart, altered
 scope, expiry or owner pause revoke it. Configured Instinct GUIDs and normalized
 addresses are denied at both preparation and confirmation; groups are draft-only.
+Expiry and confirmation freshness are checked again after recipient lookup and
+immediately before dispatch, so a slow verification cannot extend consent.
 
 SQLite FULL synchronous persistence consumes the challenge before dispatch.
 Andrea's existing message-action claim, owner-pause fence, provider idempotency
@@ -58,8 +60,9 @@ new send; no automatic retry or transport downgrade is added here.
 The JSON contains `enabled`, `port`, a new random `token` (32–128 base64url/hex
 characters), nonempty `denyAddresses` and nonempty `denyChatGuids` for the
 verified Instinct identity. The server binds only `127.0.0.1`; it rejects browser
-Origin headers. Runtime challenge state is private under
-`data/runtime/webbob/challenges.db`. Keep the file outside source control and
+Origin and forwarded-proxy headers, including empty values, and requires
+loopback socket addresses and a `127.0.0.1` Host header. Runtime challenge state
+is private under `data/runtime/webbob/challenges.db`. Keep the file outside source control and
 container mounts. A missing/invalid configuration leaves the bridge off.
 
 Web Bob uses a separate private file selected by `BOB_ANDREA_WEBBOB_CONFIG`,

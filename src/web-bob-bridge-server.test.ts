@@ -1,6 +1,11 @@
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const settings = vi.hoisted(() => ({
   baseUrl: 'http://127.0.0.1:1234',
@@ -10,6 +15,28 @@ vi.mock('./channels/bluebubbles.js', () => ({
   resolveBlueBubblesConfig: () => settings,
 }));
 vi.mock('./env.js', () => ({ readEnvFile: () => ({}) }));
+vi.mock('./build-provenance.js', () => ({
+  readCurrentGitCommit: vi.fn(),
+  requireVerifiedRuntimeBuild: vi.fn(),
+  resolveRuntimeArtifactContext: vi.fn(),
+}));
+const bridgeStub = vi.hoisted(() => ({
+  close: vi.fn(),
+  handleRequest: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('./web-bob-bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./web-bob-bridge.js')>()),
+  WebBobBridge: vi.fn(function () {
+    return bridgeStub;
+  }),
+}));
+
+import {
+  readCurrentGitCommit,
+  requireVerifiedRuntimeBuild,
+  resolveRuntimeArtifactContext,
+} from './build-provenance.js';
+import { WebBobBridge } from './web-bob-bridge.js';
 
 import {
   isWebBobReleaseAlertHold,
@@ -135,6 +162,7 @@ describe('optional Web Bob bridge runtime boundary', () => {
     expect(isWebBobReleaseAlertHold()).toBe(true);
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     settings.baseUrl = 'http://127.0.0.1:1234';
@@ -270,5 +298,140 @@ describe('optional Web Bob bridge runtime boundary', () => {
     await expect(
       readWebBobRecipient('iMessage;-;owner@example.invalid'),
     ).rejects.toThrow();
+  });
+
+  describe('explicit owner surface activation', () => {
+    const buildSha = 'a'.repeat(40);
+    let directory: string;
+    let configPath: string;
+    let configMode: number;
+    let server: http.Server;
+
+    function writeConfig(overrides: Record<string, unknown> = {}) {
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          enabled: true,
+          port: 43210,
+          token: 'synthetic-dedicated-bridge-token-12345',
+          denyAddresses: ['+12025550199'],
+          denyChatGuids: ['SMS;-;+12025550199'],
+          ...overrides,
+        }),
+        { mode: 0o600 },
+      );
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      directory = fs.mkdtempSync(path.join(os.tmpdir(), 'webbob-startup-'));
+      configPath = path.join(directory, 'bridge.json');
+      writeConfig();
+      // Keep reading real fixture bytes while testing POSIX permission/type
+      // metadata explicitly, including on Windows hosts without chmod support.
+      configMode = fs.constants.S_IFREG | 0o600;
+      const realLstat = fs.lstatSync;
+      vi.spyOn(fs, 'lstatSync').mockImplementation((file, options) => {
+        const stat = realLstat(file, options);
+        if (file === configPath && stat) {
+          stat.mode =
+            typeof stat.mode === 'bigint' ? BigInt(configMode) : configMode;
+        }
+        return stat;
+      });
+      vi.stubEnv('ANDREA_WEBBOB_CONFIG_PATH', configPath);
+      vi.stubEnv('BLUEBUBBLES_CONTROL_TOKEN', 'synthetic-control-token');
+      vi.stubEnv('ANDREA_BUILD_ID', buildSha);
+      vi.mocked(resolveRuntimeArtifactContext).mockReturnValue({
+        modulePath: '/synthetic/dist/web-bob-bridge-server.js',
+        projectRoot: '/synthetic',
+        compiledEntryPath: '/synthetic/dist/web-bob-bridge-server.js',
+        isCompiledArtifact: true,
+      });
+      vi.mocked(readCurrentGitCommit).mockReturnValue(buildSha);
+      vi.mocked(requireVerifiedRuntimeBuild).mockReset();
+      server = Object.assign(new EventEmitter(), {
+        listen: vi.fn(),
+        close: vi.fn(),
+      }) as unknown as http.Server;
+      vi.spyOn(http, 'createServer').mockReturnValue(server);
+    });
+
+    afterEach(() => {
+      fs.rmSync(directory, { recursive: true, force: true });
+    });
+
+    it.each([false, undefined, 'true', 1])(
+      'requires literal enabled=true, received %s',
+      (enabled) => {
+        writeConfig({ enabled });
+        expect(startWebBobBridgeServer({ getChannel: () => null })).toBeNull();
+        expect(requireVerifiedRuntimeBuild).not.toHaveBeenCalled();
+        expect(WebBobBridge).not.toHaveBeenCalled();
+        expect(http.createServer).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects public or linked configuration before creating any listener', () => {
+      configMode = fs.constants.S_IFREG | 0o644;
+      expect(startWebBobBridgeServer({ getChannel: () => null })).toBeNull();
+      configMode = fs.constants.S_IFLNK | 0o600;
+      expect(startWebBobBridgeServer({ getChannel: () => null })).toBeNull();
+      expect(WebBobBridge).not.toHaveBeenCalled();
+      expect(http.createServer).not.toHaveBeenCalled();
+    });
+
+    it('rejects source execution and unverified builds before opening state', () => {
+      vi.mocked(resolveRuntimeArtifactContext).mockReturnValueOnce({
+        modulePath: '/synthetic/src/web-bob-bridge-server.ts',
+        projectRoot: '/synthetic',
+        compiledEntryPath: '/synthetic/dist/web-bob-bridge-server.js',
+        isCompiledArtifact: false,
+      });
+      expect(startWebBobBridgeServer({ getChannel: () => null })).toBeNull();
+      expect(requireVerifiedRuntimeBuild).not.toHaveBeenCalled();
+      vi.mocked(requireVerifiedRuntimeBuild).mockImplementationOnce(() => {
+        throw new Error('Synthetic artifact mismatch');
+      });
+      expect(startWebBobBridgeServer({ getChannel: () => null })).toBeNull();
+      expect(WebBobBridge).not.toHaveBeenCalled();
+      expect(http.createServer).not.toHaveBeenCalled();
+    });
+
+    it('rejects reuse of the existing control credential', () => {
+      writeConfig({ token: 'synthetic-control-token' });
+      expect(startWebBobBridgeServer({ getChannel: () => null })).toBeNull();
+      expect(WebBobBridge).not.toHaveBeenCalled();
+      expect(http.createServer).not.toHaveBeenCalled();
+    });
+
+    it.each([1023, 65536, 43210.5, '43210'])('rejects port %s', (port) => {
+      writeConfig({ port });
+      expect(startWebBobBridgeServer({ getChannel: () => null })).toBeNull();
+      expect(WebBobBridge).not.toHaveBeenCalled();
+      expect(http.createServer).not.toHaveBeenCalled();
+    });
+
+    it('binds a verified runtime only to loopback and closes its challenge store', () => {
+      expect(startWebBobBridgeServer({ getChannel: () => null })).toBe(server);
+      expect(requireVerifiedRuntimeBuild).toHaveBeenCalledWith({
+        projectRoot: '/synthetic',
+        expectedGitCommit: buildSha,
+        runnerBuildId: buildSha,
+        runtimeName: 'Web Bob bridge',
+      });
+      expect(server.listen).toHaveBeenCalledWith(43210, '127.0.0.1');
+      expect(server.requestTimeout).toBe(20_000);
+      expect(server.headersTimeout).toBe(5_000);
+      expect(bridgeStub.close).not.toHaveBeenCalled();
+      server.emit('close');
+      expect(bridgeStub.close).toHaveBeenCalledOnce();
+    });
+
+    it('closes the listener after a bind error', () => {
+      startWebBobBridgeServer({ getChannel: () => null });
+      server.emit('error', new Error('Synthetic address in use'));
+      expect(server.close).toHaveBeenCalledOnce();
+    });
   });
 });

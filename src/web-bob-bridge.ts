@@ -297,24 +297,7 @@ export class WebBobBridge {
       ]),
     );
     const challenge = 'wbtxt-' + randomBytes(16).toString('hex');
-    const action = createOrRefreshMessageActionFromDraft({
-      groupFolder: 'webbob',
-      presentationChannel: 'bluebubbles',
-      presentationChatJid: 'webbob:' + scope.conversationId,
-      sourceType: 'manual_prompt',
-      sourceKey: 'webbob:inbound:' + id,
-      sourceSummary: 'Exact Web Bob owner draft',
-      draftProvenance: 'owner_literal',
-      draftText: scope.text,
-      forceApproval: true,
-      targetChannelOverride: 'bluebubbles',
-      targetOverride: {
-        kind: 'external_thread',
-        chatJid: 'bb:' + scope.chatGuid,
-        isGroup: false,
-      },
-    });
-    this.db
+    const action = this.db
       .transaction(() => {
         requireValue(
           !this.db.prepare('SELECT id FROM webbob_drafts WHERE id = ?').get(id),
@@ -329,6 +312,23 @@ export class WebBobBridge {
           503,
           'Web Bob bridge history limit reached.',
         );
+        const action = createOrRefreshMessageActionFromDraft({
+          groupFolder: 'webbob',
+          presentationChannel: 'bluebubbles',
+          presentationChatJid: 'webbob:' + scope.conversationId,
+          sourceType: 'manual_prompt',
+          sourceKey: 'webbob:inbound:' + id,
+          sourceSummary: 'Exact Web Bob owner draft',
+          draftProvenance: 'owner_literal',
+          draftText: scope.text,
+          forceApproval: true,
+          targetChannelOverride: 'bluebubbles',
+          targetOverride: {
+            kind: 'external_thread',
+            chatJid: 'bb:' + scope.chatGuid,
+            isGroup: false,
+          },
+        });
         // A new draft supersedes every older pending card in this conversation.
         const pending = this.db
           .prepare(
@@ -359,6 +359,7 @@ export class WebBobBridge {
             'pending',
             action.messageActionId,
           );
+        return action;
       })
       .immediate();
     return {
@@ -597,22 +598,36 @@ export class WebBobBridge {
     );
     if (row.state === 'consumed') return this.refreshReceipt(row);
     requireValue(
-      row.state === 'pending' &&
-        row.serverEpoch === this.epoch &&
-        row.expires > now,
+      row.state === 'pending' && row.serverEpoch === this.epoch,
       409,
       'This draft confirmation is no longer current.',
     );
     requireValue(
-      typeof value.approvedAt === 'number' &&
-        Number.isFinite(value.approvedAt) &&
-        value.approvedAt >= row.expires - TTL &&
-        value.approvedAt <= now + 1000 &&
-        value.approvedAt >= now - 30_000,
+      typeof value.approvedAt === 'number' && Number.isFinite(value.approvedAt),
       403,
     );
+    const approvedAt = value.approvedAt;
+    const validateFreshness = () => {
+      const currentTime = Math.max(now, Date.now());
+      requireValue(
+        row.expires > currentTime,
+        409,
+        'This draft confirmation is no longer current.',
+      );
+      requireValue(
+        approvedAt >= row.expires - TTL &&
+          approvedAt <= currentTime + 1000 &&
+          approvedAt >= currentTime - 30_000,
+        403,
+      );
+      return currentTime;
+    };
+    validateFreshness();
     await this.validateRecipient(scope);
-    const authorizationAt = new Date(value.approvedAt).toISOString();
+    // Membership lookup can outlive either the card or the separate owner
+    // approval. Both must still be current before consuming durable consent.
+    const validatedAt = validateFreshness();
+    const authorizationAt = new Date(approvedAt).toISOString();
     requireValue(
       validateMessagingOutboundAuthorizationFence({
         authorizationAt,
@@ -627,7 +642,7 @@ export class WebBobBridge {
       .prepare(
         "UPDATE webbob_drafts SET state = 'consumed', confirmationRequestId = ? WHERE id = ? AND state = 'pending' AND serverEpoch = ? AND expires > ?",
       )
-      .run(value.confirmationRequestId, row.id, this.epoch, now);
+      .run(value.confirmationRequestId, row.id, this.epoch, validatedAt);
     if (!consumed.changes) {
       const current = this.db
         .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
@@ -657,6 +672,7 @@ export class WebBobBridge {
       ownerAuthorizationAt: authorizationAt,
       webBobApproval,
       sendToTarget: async (channel, chatJid, text, options) => {
+        validateFreshness();
         requireValue(
           channel === 'bluebubbles' &&
             chatJid === 'bb:' + scope.chatGuid &&
@@ -705,11 +721,11 @@ export class WebBobBridge {
     const authorization = req.headers.authorization;
     const host = req.headers.host;
     if (
-      req.headers.origin ||
-      req.headers['x-forwarded-for'] ||
-      req.headers['x-forwarded-host'] ||
-      req.headers['x-real-ip'] ||
-      req.headers.forwarded ||
+      req.headers.origin !== undefined ||
+      req.headers['x-forwarded-for'] !== undefined ||
+      req.headers['x-forwarded-host'] !== undefined ||
+      req.headers['x-real-ip'] !== undefined ||
+      req.headers.forwarded !== undefined ||
       typeof authorization !== 'string' ||
       typeof host !== 'string' ||
       !/^127\.0\.0\.1(?::\d+)?$/.test(host) ||

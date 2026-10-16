@@ -35,6 +35,55 @@ function action(
 }
 
 describe('Web Bob host-only dispatch approval', () => {
+  it.each([
+    { messageActionId: 'another-action' },
+    {
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;-;+12025550103',
+        isGroup: false,
+      }),
+    },
+    { presentationChatJid: 'webbob:another-conversation' },
+    { targetChannel: 'telegram' as const },
+  ])('rejects a changed action binding: %j', (overrides) => {
+    const now = Date.now();
+    const original = action();
+    const approval = mintWebBobDispatchApproval(original, now);
+    const altered = action(overrides);
+    expect(
+      isWebBobDispatchApproval(
+        approval,
+        altered,
+        altered.presentationChatJid!,
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects an approval presented from a different conversation', () => {
+    const now = Date.now();
+    const original = action();
+    const approval = mintWebBobDispatchApproval(original, now);
+    expect(
+      isWebBobDispatchApproval(
+        approval,
+        original,
+        'webbob:another-conversation',
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([undefined, null, '', 'bb:iMessage;-;+12025550102'])(
+    'does not mint approval for a non-Web Bob presentation surface: %s',
+    (presentationChatJid) => {
+      expect(() =>
+        mintWebBobDispatchApproval(action({ presentationChatJid })),
+      ).toThrow('Web Bob approval requires its own presentation surface.');
+    },
+  );
+
   it('binds the minted capability to the exact content hash', () => {
     const now = Date.now();
     const original = action();

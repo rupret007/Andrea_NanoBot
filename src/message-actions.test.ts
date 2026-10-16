@@ -54,6 +54,11 @@ import {
   validateMessagingOutboundAuthorizationFence,
 } from './messaging-outbound-pause.js';
 import { ChannelDeliveryRejectedBeforeDispatchError } from './channel-delivery.js';
+import {
+  isWebBobDispatchApproval,
+  mintWebBobDispatchApproval,
+  type WebBobDispatchApproval,
+} from './web-bob-approval.js';
 import type {
   CommunicationThreadRecord,
   DelegationRuleRecord,
@@ -170,6 +175,126 @@ describe('message actions', () => {
     globalThis.fetch = originalFetch;
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  describe('Web Bob core dispatch boundary', () => {
+    function createWebBobAction() {
+      return createOrRefreshMessageActionFromDraft({
+        groupFolder: 'webbob',
+        presentationChannel: 'bluebubbles',
+        presentationChatJid: 'webbob:conversation-123',
+        sourceType: 'manual_prompt',
+        sourceKey: 'webbob:inbound:core-boundary',
+        sourceSummary: 'Synthetic owner-approved draft',
+        draftProvenance: 'owner_literal',
+        draftText: 'Exact synthetic text.\nSecond line.',
+        forceApproval: true,
+        targetChannelOverride: 'bluebubbles',
+        targetOverride: {
+          kind: 'external_thread',
+          chatJid: 'bb:iMessage;-;+12025550102',
+          isGroup: false,
+        },
+      });
+    }
+
+    it.each([
+      'missing',
+      'serialized',
+      'other action',
+      'altered body',
+      'altered target',
+      'other conversation',
+      'expired',
+    ])('blocks explicit execution with %s approval', async (scenario) => {
+      const action = createWebBobAction();
+      let approval: WebBobDispatchApproval | undefined =
+        mintWebBobDispatchApproval(action);
+      let chatJid = action.presentationChatJid!;
+      if (scenario === 'missing') approval = undefined;
+      if (scenario === 'serialized') {
+        approval = JSON.parse(JSON.stringify(approval));
+      }
+      if (scenario === 'other action') {
+        approval = mintWebBobDispatchApproval({
+          ...action,
+          messageActionId: 'different-action',
+        });
+      }
+      if (scenario === 'altered body') {
+        updateMessageAction(action.messageActionId, {
+          draftText: action.draftText + ' Changed.',
+        });
+      }
+      if (scenario === 'altered target') {
+        updateMessageAction(action.messageActionId, {
+          targetConversationJson: JSON.stringify({
+            kind: 'external_thread',
+            chatJid: 'bb:iMessage;-;+12025550103',
+            isGroup: false,
+          }),
+        });
+      }
+      if (scenario === 'other conversation') chatJid = 'webbob:other';
+      if (scenario === 'expired') {
+        approval = mintWebBobDispatchApproval(action, Date.now() - 30_000);
+      }
+      const sendToTarget = vi.fn();
+      const result = await executeExplicitlyAuthorizedMessageAction(
+        action.messageActionId,
+        {
+          groupFolder: 'webbob',
+          channel: 'bluebubbles',
+          chatJid,
+          ownerAuthorizationAt: new Date().toISOString(),
+          webBobApproval: approval,
+          sendToTarget,
+        },
+      );
+
+      expect(result.replyText).toContain('cannot authorize a send');
+      expect(sendToTarget).not.toHaveBeenCalled();
+      expect(getMessageAction(action.messageActionId)?.sendStatus).toBe(
+        'drafted',
+      );
+    });
+
+    it('dispatches an exact minted approval once and consumes its capability', async () => {
+      const action = createWebBobAction();
+      const approval = mintWebBobDispatchApproval(action);
+      const sendToTarget = vi.fn(async () => ({
+        platformMessageId: 'synthetic-core-receipt',
+        threadId: 'bb:iMessage;-;+12025550102',
+      }));
+      const deps = {
+        groupFolder: 'webbob',
+        channel: 'bluebubbles' as const,
+        chatJid: action.presentationChatJid!,
+        ownerAuthorizationAt: new Date().toISOString(),
+        webBobApproval: approval,
+        sendToTarget,
+      };
+      const result = await executeExplicitlyAuthorizedMessageAction(
+        action.messageActionId,
+        deps,
+      );
+
+      expect(result.action?.sendStatus).toBe('sent');
+      expect(sendToTarget).toHaveBeenCalledWith(
+        'bluebubbles',
+        'bb:iMessage;-;+12025550102',
+        action.draftText,
+        expect.objectContaining({ idempotencyKey: action.messageActionId }),
+      );
+      expect(isWebBobDispatchApproval(approval, action, deps.chatJid)).toBe(
+        false,
+      );
+      await executeExplicitlyAuthorizedMessageAction(
+        action.messageActionId,
+        deps,
+      );
+      expect(sendToTarget).toHaveBeenCalledOnce();
+    });
   });
 
   it('creates a tracked bluebubbles reply draft with an open outcome', () => {
