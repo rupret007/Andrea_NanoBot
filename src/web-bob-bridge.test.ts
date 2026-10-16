@@ -312,19 +312,14 @@ describe('Web Bob dedicated Andrea ingress', () => {
       { readonly: true },
     );
     try {
-      const row = db
-        .prepare('SELECT id, state, challengeHash FROM webbob_drafts')
-        .get() as { id: string; state: string; challengeHash: string };
-      expect(row).toMatchObject({
-        state: 'approval_unavailable',
-        challengeHash: '',
-      });
+      expect(db.prepare('SELECT * FROM webbob_drafts').all()).toEqual([]);
+      expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toEqual([]);
       await expect(
         bridge.confirm({
-          bridgeDraftId: row.id,
+          bridgeDraftId: '0'.repeat(64),
           approvalToken: 'wbtxt-' + '0'.repeat(64),
         }),
-      ).rejects.toMatchObject({ status: 409 });
+      ).rejects.toMatchObject({ status: 404 });
     } finally {
       db.close();
     }
@@ -400,8 +395,18 @@ describe('Web Bob dedicated Andrea ingress', () => {
       await rejected;
       await expect(
         bridge.confirm({ ...draftIdentity, approvalToken: token }),
-      ).rejects.toMatchObject({ status: 409 });
-      expect((await bridge.status(draftIdentity)).state).not.toBe('pending');
+      ).rejects.toMatchObject({ status: reason === 'restart' ? 404 : 409 });
+      if (reason === 'restart') {
+        // Undelivered drafts never persist, so restart forgets the reference.
+        await expect(bridge.status(draftIdentity)).rejects.toMatchObject({
+          status: 404,
+        });
+      } else {
+        expect((await bridge.status(draftIdentity)).state).not.toBe('pending');
+      }
+      expect(
+        listMessageActionsForGroup({ groupFolder: 'webbob' }),
+      ).toHaveLength(reason === 'supersede' ? 1 : 0);
       expect(send).not.toHaveBeenCalled();
     },
   );

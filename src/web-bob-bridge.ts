@@ -21,12 +21,17 @@ import {
 import { secureEqual } from './secure-equal.js';
 import { mintWebBobDispatchApproval } from './web-bob-approval.js';
 import {
+  WebBobDraftRetention,
+  WEB_BOB_TERMINAL_DRAFT_LIMIT,
+} from './web-bob-draft-retention.js';
+import {
   DisabledOwnerChallengeDelivery,
   type OwnerChallengeDelivery,
 } from './owner-challenge-delivery.js';
 
 const TTL = 5 * 60_000;
 const APPROVAL_TTL = 30_000;
+const PENDING_LIMIT = 10000;
 const ISSUER = 'web-bob';
 const AUDIENCE = 'andrea';
 const PREFIX = '/web-bob/v1/';
@@ -195,6 +200,12 @@ export class WebBobBridge {
   private readonly epoch = randomBytes(24).toString('hex');
   private readonly deny: Set<string>;
   private readonly ownerChallengeDelivery: OwnerChallengeDelivery;
+  private readonly retention: WebBobDraftRetention;
+  // Undelivered challenges never reach either persistent store. Keep failed
+  // delivery diagnostics briefly in bounded memory; they confer no authority.
+  private readonly staged = new Map<string, StoredDraft>();
+  private deliveriesInFlight = 0;
+  private closed = false;
   private readonly inspections = new Map<
     string,
     Promise<Record<string, unknown>>
@@ -255,16 +266,55 @@ export class WebBobBridge {
       )`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS webbob_drafts_pending
       ON webbob_drafts (state, expires)`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_server_epoch (
+      id INTEGER PRIMARY KEY CHECK (id = 1), epoch TEXT NOT NULL
+    )`);
+    this.retention = new WebBobDraftRetention(this.db, (status, message) => {
+      throw new WebBobBridgeError(status, message);
+    });
+    // Restart also revokes deliveries still awaiting an adapter in another
+    // instance. Their eventual completion cannot create a persistent draft.
+    this.db
+      .prepare('INSERT OR REPLACE INTO webbob_server_epoch VALUES (1, ?)')
+      .run(this.epoch);
     // Restart cannot revive a pending owner decision. Consumed records survive.
     this.db
       .prepare(
         "UPDATE webbob_drafts SET state = 'expired', challengeHash = '' WHERE state IN ('pending', 'awaiting_delivery')",
       )
       .run();
+    this.db.transaction(() => this.retention.prune(Date.now())).immediate();
   }
 
   close(): void {
+    this.closed = true;
     this.db.close();
+  }
+
+  private pruneStaged(now: number): void {
+    let terminal = 0;
+    for (const row of this.staged.values()) {
+      if (row.state === 'awaiting_delivery' && row.expires <= now) {
+        row.state = 'expired';
+        row.challengeHash = '';
+      }
+      if (row.state !== 'awaiting_delivery') terminal++;
+    }
+    for (const [id, row] of this.staged) {
+      if (terminal <= WEB_BOB_TERMINAL_DRAFT_LIMIT) break;
+      if (row.state !== 'awaiting_delivery') {
+        this.staged.delete(id);
+        terminal--;
+      }
+    }
+  }
+
+  private assertCurrentEpoch(): void {
+    requireValue(!this.closed, 409);
+    const current = this.db
+      .prepare('SELECT epoch FROM webbob_server_epoch WHERE id = 1')
+      .get() as { epoch: string };
+    requireValue(current.epoch === this.epoch, 409);
   }
 
   private async validateRecipient(scope: Scope): Promise<void> {
@@ -306,6 +356,11 @@ export class WebBobBridge {
     value: Record<string, unknown>,
     now = Date.now(),
   ): Promise<Record<string, unknown>> {
+    requireValue(
+      !(this.ownerChallengeDelivery instanceof DisabledOwnerChallengeDelivery),
+      503,
+      'Owner approval delivery is unavailable.',
+    );
     const scope = parseDraftScope(value);
     await this.validateRecipient(scope);
     requireValue(
@@ -319,50 +374,43 @@ export class WebBobBridge {
     requireValue(validateMessagingOutboundAuthorizationFence(fence).ok, 409);
     const serialized = JSON.stringify(scope);
     const digest = hash(serialized);
-    const id = hash(
-      JSON.stringify([
-        scope.actor,
-        scope.conversationId,
-        scope.epoch,
-        scope.draftId,
-        scope.revision,
-      ]),
-    );
+    // A pruned reference can never name a new action, even if a caller repeats
+    // every input field. Revision watermarks independently reject stale input.
+    const id = randomBytes(32).toString('hex');
     const challenge = 'wbtxt-' + randomBytes(32).toString('hex');
-    const action = this.db
+    this.pruneStaged(now);
+    requireValue(
+      this.deliveriesInFlight < PENDING_LIMIT,
+      503,
+      'Web Bob bridge pending draft limit reached.',
+    );
+    this.db
       .transaction(() => {
-        requireValue(
-          !this.db
-            .prepare(
-              `SELECT id FROM webbob_drafts
-               WHERE json_extract(scope, '$.actor') = ?
-                 AND json_extract(scope, '$.conversationId') = ?
-                 AND json_extract(scope, '$.epoch') = ?
-                 AND json_extract(scope, '$.draftId') = ?
-                 AND json_extract(scope, '$.revision') >= ? LIMIT 1`,
-            )
-            .get(
-              scope.actor,
-              scope.conversationId,
-              scope.epoch,
-              scope.draftId,
-              scope.revision,
-            ),
-          409,
-          'This draft revision already exists or is stale; review a fresh draft.',
-        );
-        // Retain terminal rows for replay protection and receipt inspection,
-        // but only active decisions consume capacity. Replace under the same
-        // write lock so an old challenge cannot race the new revision.
-        this.db
-          .prepare(
-            "UPDATE webbob_drafts SET state = 'expired', challengeHash = '' WHERE state IN ('pending', 'awaiting_delivery') AND expires <= ?",
+        this.assertCurrentEpoch();
+        this.retention.prune(now);
+        this.retention.assertRevision(scope);
+        let awaiting = 0;
+        for (const row of this.staged.values()) {
+          const previous = JSON.parse(row.scope) as Scope;
+          requireValue(
+            previous.actor !== scope.actor ||
+              previous.conversationId !== scope.conversationId ||
+              previous.epoch !== scope.epoch ||
+              previous.draftId !== scope.draftId ||
+              previous.revision < scope.revision,
+            409,
+            'This draft revision already exists or is stale; review a fresh draft.',
+          );
+          if (
+            row.state === 'awaiting_delivery' &&
+            previous.conversationId !== scope.conversationId
           )
-          .run(now);
+            awaiting++;
+        }
         this.db
           .prepare(
             `UPDATE webbob_drafts SET state = 'superseded', challengeHash = ''
-             WHERE state IN ('pending', 'awaiting_delivery') AND json_extract(scope, '$.conversationId') = ?`,
+         WHERE state IN ('pending', 'awaiting_delivery') AND json_extract(scope, '$.conversationId') = ?`,
           )
           .run(scope.conversationId);
         const count = this.db
@@ -371,45 +419,37 @@ export class WebBobBridge {
           )
           .get() as { n: number };
         requireValue(
-          count.n < 10000,
+          count.n + awaiting < PENDING_LIMIT,
           503,
           'Web Bob bridge pending draft limit reached.',
         );
-        const action = createOrRefreshMessageActionFromDraft({
-          groupFolder: 'webbob',
-          presentationChannel: 'bluebubbles',
-          presentationChatJid: 'webbob:' + scope.conversationId,
-          sourceType: 'manual_prompt',
-          sourceKey: 'webbob:inbound:' + id,
-          sourceSummary: 'Exact Web Bob owner draft',
-          draftProvenance: 'owner_literal',
-          draftText: scope.text,
-          forceApproval: true,
-          targetChannelOverride: 'bluebubbles',
-          targetOverride: {
-            kind: 'external_thread',
-            chatJid: 'bb:' + scope.chatGuid,
-            isGroup: false,
-          },
-        });
-        this.db
-          .prepare(
-            'INSERT INTO webbob_drafts (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          )
-          .run(
-            id,
-            serialized,
-            digest,
-            challengeHash(challenge, id, scope.revision, digest),
-            this.epoch,
-            now + TTL,
-            fence.pauseGeneration,
-            'awaiting_delivery',
-            action.messageActionId,
-          );
-        return action;
+        this.retention.prune(now);
       })
       .immediate();
+    for (const row of this.staged.values()) {
+      if (
+        row.state === 'awaiting_delivery' &&
+        (JSON.parse(row.scope) as Scope).conversationId === scope.conversationId
+      ) {
+        row.state = 'superseded';
+        row.challengeHash = '';
+      }
+    }
+    const staged: StoredDraft = {
+      id,
+      scope: serialized,
+      digest,
+      challengeHash: challengeHash(challenge, id, scope.revision, digest),
+      serverEpoch: this.epoch,
+      expires: now + TTL,
+      pauseGeneration: fence.pauseGeneration,
+      state: 'awaiting_delivery',
+      actionId: '',
+      confirmationRequestId: null,
+      approvedAt: null,
+    };
+    this.staged.set(id, staged);
+    this.deliveriesInFlight++;
     try {
       await this.ownerChallengeDelivery.deliver(
         challenge,
@@ -425,33 +465,78 @@ export class WebBobBridge {
           text: scope.text,
         }),
       );
-      requireValue(validateMessagingOutboundAuthorizationFence(fence).ok, 409);
-      const delivered = this.db
-        .prepare(
-          "UPDATE webbob_drafts SET state = 'pending' WHERE id = ? AND state = 'awaiting_delivery' AND serverEpoch = ? AND expires > ?",
-        )
-        .run(id, this.epoch, Math.max(now, Date.now()));
-      requireValue(delivered.changes, 409);
+      const action = this.db
+        .transaction(() => {
+          this.assertCurrentEpoch();
+          requireValue(
+            staged.state === 'awaiting_delivery' &&
+              staged.expires > Math.max(now, Date.now()),
+            409,
+          );
+          requireValue(
+            validateMessagingOutboundAuthorizationFence(fence).ok,
+            409,
+          );
+          this.retention.assertRevision(scope);
+          this.retention.recordRevision(scope);
+          const action = createOrRefreshMessageActionFromDraft({
+            groupFolder: 'webbob',
+            presentationChannel: 'bluebubbles',
+            presentationChatJid: 'webbob:' + scope.conversationId,
+            sourceType: 'manual_prompt',
+            sourceKey: 'webbob:inbound:' + id,
+            sourceSummary: 'Exact Web Bob owner draft',
+            draftProvenance: 'owner_literal',
+            draftText: scope.text,
+            forceApproval: true,
+            targetChannelOverride: 'bluebubbles',
+            targetOverride: {
+              kind: 'external_thread',
+              chatJid: 'bb:' + scope.chatGuid,
+              isGroup: false,
+            },
+          });
+          this.db
+            .prepare(
+              'INSERT INTO webbob_drafts (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            )
+            .run(
+              id,
+              serialized,
+              digest,
+              staged.challengeHash,
+              this.epoch,
+              now + TTL,
+              fence.pauseGeneration,
+              'pending',
+              action.messageActionId,
+            );
+          return action;
+        })
+        .immediate();
+      this.staged.delete(id);
+      return {
+        ok: true,
+        draftId: id,
+        digest,
+        expiresAt: now + TTL,
+        actionId: action.messageActionId,
+      };
     } catch {
-      this.db
-        .prepare(
-          "UPDATE webbob_drafts SET state = 'approval_unavailable', challengeHash = '' WHERE id = ? AND state = 'awaiting_delivery'",
-        )
-        .run(id);
+      if (staged.state === 'awaiting_delivery') {
+        staged.state = 'approval_unavailable';
+        staged.challengeHash = '';
+      }
       // Delivery errors can contain secret bytes, including bridge error types.
       // Never forward any adapter exception or return the token as a fallback.
       throw new WebBobBridgeError(
         503,
         'Owner approval delivery is unavailable.',
       );
+    } finally {
+      this.deliveriesInFlight--;
+      this.pruneStaged(Date.now());
     }
-    return {
-      ok: true,
-      draftId: id,
-      digest,
-      expiresAt: now + TTL,
-      actionId: action.messageActionId,
-    };
   }
 
   private bound(
@@ -471,9 +556,11 @@ export class WebBobBridge {
       typeof value.bridgeDraftId === 'string' &&
         /^[a-f0-9]{64}$/.test(value.bridgeDraftId),
     );
-    const row = this.db
-      .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
-      .get(value.bridgeDraftId) as StoredDraft | undefined;
+    const row =
+      (this.db
+        .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
+        .get(value.bridgeDraftId) as StoredDraft | undefined) ??
+      this.staged.get(value.bridgeDraftId);
     requireValue(row, 404, 'Unknown Web Bob draft.');
     requireValue(
       typeof row.scope === 'string' &&
@@ -489,6 +576,14 @@ export class WebBobBridge {
 
   cancel(value: Record<string, unknown>): Record<string, unknown> {
     const { row } = this.bound(value);
+    if (this.staged.has(row.id)) {
+      if (row.state === 'awaiting_delivery') {
+        row.state = 'cancelled';
+        row.challengeHash = '';
+      }
+      this.pruneStaged(Date.now());
+      return this.receipt(row);
+    }
     this.db
       .prepare(
         "UPDATE webbob_drafts SET state = 'cancelled', challengeHash = '' WHERE id = ? AND state IN ('pending', 'awaiting_delivery')",
@@ -497,6 +592,7 @@ export class WebBobBridge {
     const current = this.db
       .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
       .get(row.id) as StoredDraft;
+    this.db.transaction(() => this.retention.prune(Date.now())).immediate();
     return this.receipt(current);
   }
 
@@ -527,7 +623,10 @@ export class WebBobBridge {
       receipt.idempotencyKey === row.actionId;
     if (verified) {
       this.db
-        .prepare('INSERT OR IGNORE INTO webbob_delivery VALUES (?, ?)')
+        .prepare(
+          `INSERT OR IGNORE INTO webbob_delivery
+          SELECT ?, ? WHERE EXISTS (SELECT 1 FROM webbob_drafts WHERE id = ?)`,
+        )
         .run(
           row.id,
           JSON.stringify({
@@ -539,6 +638,7 @@ export class WebBobBridge {
             actionId: row.actionId,
             digest: row.digest,
           }),
+          row.id,
         );
     }
     const saved = this.db
@@ -633,8 +733,11 @@ export class WebBobBridge {
           };
         }
         this.db
-          .prepare('INSERT OR REPLACE INTO webbob_delivery VALUES (?, ?)')
-          .run(row.id, JSON.stringify(evidence));
+          .prepare(
+            `INSERT OR REPLACE INTO webbob_delivery
+            SELECT ?, ? WHERE EXISTS (SELECT 1 FROM webbob_drafts WHERE id = ?)`,
+          )
+          .run(row.id, JSON.stringify(evidence), row.id);
         return {
           ...result,
           state: evidence.state,
@@ -740,6 +843,7 @@ export class WebBobBridge {
       'This draft confirmation is no longer current.',
     );
     row.state = 'consumed';
+    this.db.transaction(() => this.retention.prune(Date.now())).immediate();
     const action = getMessageAction(row.actionId);
     requireValue(
       action &&

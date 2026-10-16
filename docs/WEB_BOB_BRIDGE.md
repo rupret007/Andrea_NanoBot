@@ -17,15 +17,17 @@ The `OwnerChallengeDelivery` interface provides
 `deliver(challenge, summary)` for a future integration with Bob's front door to
 Jeff. The summary identifies the exact draft revision, recipient, content and
 expiry. Only a disabled implementation ships here: it rejects delivery, and
-`POST .../draft` returns 503 without exposing the challenge. No messaging-service
-HTTP, real message sender or auto-reply implementation is included. An injected
+`POST .../draft` returns 503 before creating any persistent draft or core action.
+No messaging-service HTTP, real message sender or auto-reply implementation is included. An injected
 delivery adapter is a trusted host dependency, never a caller-selected URL or
 request option. Test adapters capture synthetic challenges only.
 
-A draft remains `awaiting_delivery` until that interface completes successfully.
-Delivery failure revokes the draft even if the adapter saw the challenge before
-failing. Cancellation, supersession, expiry or restart during delivery cannot
-make it confirmable later. A successful `/draft` response contains draft and
+A draft remains `awaiting_delivery` in bounded memory until that interface
+completes successfully. Only then are its core action and persistent draft
+created. Delivery failure creates neither record and revokes the challenge even
+if the adapter saw it before failing. Failed delivery diagnostics remain only
+in bounded memory and disappear on restart. Cancellation, supersession, expiry
+or restart during delivery cannot make it confirmable later. A successful `/draft` response contains draft and
 receipt identifiers, its digest and expiry, but no approval token or other
 confirmation capability.
 
@@ -58,9 +60,21 @@ of the same draft ID creates a fresh challenge and supersedes the older pending
 card. Equal or lower revisions are rejected, including after cancellation or
 consumption. Revisions cannot transfer an old challenge to edited content.
 The 10,000-draft limit counts pending decisions and challenges awaiting owner
-delivery; elapsed drafts are expired before enforcing it. Terminal records
-remain available for replay protection and receipt inspection without exhausting
-pending capacity.
+delivery; elapsed drafts are expired before enforcing it. Unfinished adapter
+calls are separately capped at 10,000, including calls already superseded.
+At most 10,000 terminal drafts of all states are retained for receipt inspection;
+older records and their delivery evidence are pruned on admission, cancellation,
+consumption and startup. SQLite reuses the freed pages. Failed in-memory delivery
+diagnostics have the same 10,000-record cap.
+
+A separate persistent registry retains the highest accepted revision for each
+owner/conversation/epoch/draft identity, including legacy rows before pruning.
+Its 20,000-identity limit rejects new identities with 503 once full; known
+identities can still advance revisions. These watermarks are never evicted or
+reset on restart. An oversized legacy store seals admission for untracked
+identities before pruning, so forgetting a receipt cannot revive a stale
+revision. Each new bridge reference is also server-random and cannot reconnect
+a pruned token to an old core action. No unbounded token tombstone list is used.
 
 SQLite FULL synchronous persistence consumes the challenge before dispatch.
 Andrea's existing message-action claim, owner-pause fence, provider idempotency
@@ -69,9 +83,10 @@ binds that dispatch to the exact action; serialized objects and caller-selected
 `webbob:` chat IDs cannot create it. Success requires the matching persisted
 action and a complete receipt for the exact recipient thread. Missing, partial,
 lost or mismatched receipts remain unconfirmed. Every confirmation replay,
-including a concurrent duplicate or a replay after restart, fails with 409;
-`/status` is the way to inspect a consumed draft's receipt. This correlation
-proves a submission, not arrival on a recipient's phone.
+including a concurrent duplicate or a replay after restart, fails with 409
+(or 404 once the reference is pruned). `/status` inspects retained consumed
+draft receipts; pruned receipts return 404. This correlation proves a submission,
+not arrival on a recipient's phone.
 An uncertain send must be checked before anyone prepares a new draft.
 
 Delivery protocol 1 adds an authenticated, bounded, read-only status inspection.
