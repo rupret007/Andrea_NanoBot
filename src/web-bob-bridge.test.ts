@@ -1448,7 +1448,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it.each(['draft id', 'revision', 'request body'])(
+  it.each([
+    'draft id',
+    'revision',
+    'content hash',
+    'action recipient',
+    'request body',
+  ])(
     'binds the owner token to the stored %s even when the scope digest is recomputed',
     async (changed) => {
       const input = await approval();
@@ -1463,6 +1469,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
         const scope = JSON.parse(row.scope);
         if (changed === 'draft id') bridgeDraftId = 'f'.repeat(64);
         if (changed === 'revision') scope.revision += 1;
+        if (changed === 'content hash')
+          scope.text = 'Changed exact message bytes.';
+        if (changed === 'action recipient') {
+          scope.addresses = ['+12025550103'];
+          scope.chatGuid = 'iMessage;-;+12025550103';
+        }
         if (changed === 'request body') {
           const requestScope = JSON.parse(row.requestScope) as Record<
             string,

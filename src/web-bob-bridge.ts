@@ -54,6 +54,7 @@ const challengeHash = (
   id: string,
   revision: number,
   digest: string,
+  requestDigest: string,
 ) =>
   hash(
     JSON.stringify([
@@ -61,6 +62,7 @@ const challengeHash = (
       id,
       revision,
       digest,
+      requestDigest,
       challenge,
     ]),
   );
@@ -493,6 +495,7 @@ export class WebBobBridge {
         challenge,
         id,
         scope.revision,
+        digest,
         requestDigest,
       ),
       serverEpoch: this.epoch,
@@ -662,6 +665,21 @@ export class WebBobBridge {
       'This operation does not match the stored draft.',
     );
     const scope = JSON.parse(row.scope) as Scope;
+    const requestScope = JSON.parse(row.requestScope) as WebBobRequestScope;
+    requireValue(
+      scope.issuer === requestScope.issuer &&
+        scope.audience === requestScope.audience &&
+        scope.conversationId === requestScope.conversationId &&
+        scope.epoch === requestScope.epoch &&
+        scope.draftId === requestScope.draftId &&
+        scope.revision === requestScope.revision &&
+        scope.chatGuid === requestScope.chatGuid &&
+        scope.addresses.length === requestScope.addresses.length &&
+        scope.addresses.every((a, i) => a === requestScope.addresses[i]) &&
+        scope.text === requestScope.text,
+      403,
+      'This operation does not match the stored draft.',
+    );
     return { row, scope };
   }
 
@@ -880,6 +898,7 @@ export class WebBobBridge {
           value.approvalToken,
           row.id,
           scope.revision,
+          row.digest,
           row.requestDigest,
         ),
         row.challengeHash,
