@@ -2,7 +2,42 @@ import { describe, expect, it } from 'vitest';
 
 import { parseWebBobJsonBody, WebBobJsonParseError } from './web-bob-json.js';
 
+function nestedBody(kind: 'array' | 'object' | 'mixed', depth: number): string {
+  let value = '0';
+  for (let index = 0; index < depth; index += 1) {
+    value =
+      kind === 'array' || (kind === 'mixed' && index % 2 === 0)
+        ? `[${value}]`
+        : `{"n":${value}}`;
+  }
+  return `{"nested":${value}}`;
+}
+
 describe('Web Bob JSON ingress', () => {
+  it.each(['array', 'object', 'mixed'] as const)(
+    'bounds %s nesting while accepting the 64-container boundary',
+    (kind) => {
+      const accepted = nestedBody(kind, 63);
+      expect(parseWebBobJsonBody(accepted)).toEqual(JSON.parse(accepted));
+      expect(() => parseWebBobJsonBody(nestedBody(kind, 64))).toThrow(
+        WebBobJsonParseError,
+      );
+    },
+  );
+
+  it.each([
+    ['array', 10000],
+    ['object', 3000],
+    ['mixed', 4000],
+  ] as const)(
+    'rejects deeply nested %s input within the HTTP body limit without a stack overflow',
+    (kind, depth) => {
+      const body = nestedBody(kind, depth);
+      expect(Buffer.byteLength(body)).toBeLessThanOrEqual(24000);
+      expect(() => parseWebBobJsonBody(body)).toThrow(WebBobJsonParseError);
+    },
+  );
+
   it('rejects duplicate object keys before schema validation', () => {
     expect(() =>
       parseWebBobJsonBody('{"bridgeDraftId":"a","bridgeDraftId":"b"}'),
