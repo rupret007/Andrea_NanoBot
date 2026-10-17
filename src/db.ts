@@ -10722,6 +10722,76 @@ export function upsertMessageAction(
   return result.changes > 0;
 }
 
+/**
+ * Reconcile only the bridge's server-minted action namespace. The caller holds
+ * the bridge store's write lock after committing its draft changes, so a core
+ * action being inserted by another bridge cannot be mistaken for an orphan.
+ * Delete outcomes and actions in one core transaction: interrupted cleanup is
+ * retried on startup, and never leaves an outcome without its owning action.
+ */
+export function reconcileWebBobMessageActions(
+  retained: { id: string; actionId: string }[],
+): number {
+  const references = JSON.stringify(retained);
+  const candidates = db.prepare(`
+    SELECT message_action_id AS actionId, source_key AS sourceKey
+    FROM message_actions
+    WHERE group_folder = 'webbob'
+      AND source_type = 'manual_prompt'
+      AND source_key GLOB 'webbob:inbound:*'
+      AND target_kind = 'external_thread'
+      AND target_channel = 'bluebubbles'
+      AND presentation_chat_jid GLOB 'webbob:*'
+      AND message_action_id > ?
+      AND source_key || ':' || message_action_id NOT IN (
+        SELECT 'webbob:inbound:' || json_extract(value, '$.id') || ':' ||
+          json_extract(value, '$.actionId') FROM json_each(?)
+      )
+    ORDER BY message_action_id LIMIT 256
+  `);
+  const removeOutcomes = db.prepare(`
+    DELETE FROM outcomes WHERE group_folder = 'webbob'
+      AND source_type = 'message_action' AND source_key = ?
+  `);
+  const removeAction = db.prepare(`
+    DELETE FROM message_actions WHERE message_action_id = ?
+      AND group_folder = 'webbob' AND source_type = 'manual_prompt'
+      AND source_key = ?
+  `);
+  return db
+    .transaction(() => {
+      let cursor = '';
+      let removed = 0;
+      for (;;) {
+        // Legacy stores may contain unbounded history; inspect a fixed batch at
+        // a time instead of bringing every abandoned action into memory.
+        const batch = candidates.all(cursor, references) as {
+          actionId: string;
+          sourceKey: string;
+        }[];
+        if (!batch.length) break;
+        for (const row of batch) {
+          cursor = row.actionId;
+          if (!/^webbob:inbound:[a-f0-9]{64}$/.test(row.sourceKey)) continue;
+          const digest = createHash('sha256')
+            .update(`webbob\u0000manual_prompt\u0000${row.sourceKey}`, 'utf8')
+            .digest('hex');
+          // This is the core's deterministic inbound action ID. Namespace-like
+          // metadata alone must never authorize deleting an unrelated action.
+          const expectedId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(
+            13,
+            16,
+          )}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+          if (row.actionId !== expectedId) continue;
+          removeOutcomes.run(row.actionId);
+          removed += removeAction.run(row.actionId, row.sourceKey).changes;
+        }
+      }
+      return removed;
+    })
+    .immediate();
+}
+
 function mapMessageActionRow(row: {
   message_action_id: string;
   group_folder: string;

@@ -58,6 +58,10 @@ import {
 import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
 import { isNeverAuthorizeSendCaller } from './trusted-owner-review-surface.js';
 import {
+  isWebBobDispatchApproval,
+  type WebBobDispatchApproval,
+} from './web-bob-approval.js';
+import {
   isExactNonEmptyMessagesHistoryRefreshReceipt,
   validateMessagesThreadSnapshotBinding,
 } from './recent-text-review.js';
@@ -197,6 +201,8 @@ export interface ApplyMessageActionOperationResult {
 }
 
 export interface MessageActionExecutionDeps {
+  /** Host-minted after the dedicated Web Bob challenge is durably consumed. */
+  readonly webBobApproval?: WebBobDispatchApproval;
   groupFolder: string;
   channel: PresentationChannel;
   chatJid: string;
@@ -228,7 +234,13 @@ export interface MessageActionExecutionDeps {
 const UNAUTHORIZED_SEND_CALLER_REPLY =
   'Andrea: QA, Karen, and ordinary contact threads cannot authorize a send. I did not send anything. Say `send it` in Bob if you still want this to go out.';
 
-function isUnauthorizedSendCaller(deps: MessageActionExecutionDeps): boolean {
+function isUnauthorizedSendCaller(
+  deps: MessageActionExecutionDeps,
+  action: MessageActionRecord,
+): boolean {
+  if (deps.chatJid.startsWith('webbob:')) {
+    return !isWebBobDispatchApproval(deps.webBobApproval, action, deps.chatJid);
+  }
   return isNeverAuthorizeSendCaller({
     group: deps.ownerReviewGroup,
     chatJid: deps.chatJid,
@@ -3195,7 +3207,7 @@ async function createScheduledSend(params: {
   updatedAction: MessageActionRecord;
   applied: boolean;
 }> {
-  if (isUnauthorizedSendCaller(params.deps)) {
+  if (isUnauthorizedSendCaller(params.deps, params.action)) {
     return {
       replyText: UNAUTHORIZED_SEND_CALLER_REPLY,
       updatedAction: params.action,
@@ -3615,7 +3627,7 @@ async function executeSendOperationUnlocked(params: {
       didSend: false,
     };
   }
-  if (isUnauthorizedSendCaller(params.deps)) {
+  if (isUnauthorizedSendCaller(params.deps, params.action)) {
     return {
       action: params.action,
       replyText: UNAUTHORIZED_SEND_CALLER_REPLY,
@@ -4630,7 +4642,7 @@ export async function applyMessageActionOperation(
     (operation.kind === 'send' ||
       operation.kind === 'rewrite_and_send' ||
       operation.kind === 'defer') &&
-    isUnauthorizedSendCaller(deps)
+    isUnauthorizedSendCaller(deps, action)
   ) {
     return {
       handled: true,
