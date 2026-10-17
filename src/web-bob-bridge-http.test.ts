@@ -227,4 +227,20 @@ describe('Web Bob JSON security at the HTTP boundary', () => {
     expect(send).not.toHaveBeenCalled();
     expect(readDelivery).not.toHaveBeenCalled();
   });
+
+  it('rejects an escaped trailing high surrogate before preparing a draft', async () => {
+    const response = await post(
+      'draft',
+      JSON.stringify({ ...draft(), text: 'Synthetic text\ud800' }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Invalid Web Bob request.',
+    });
+    expect(resolveRecipient).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(readDelivery).not.toHaveBeenCalled();
+    expect(listMessageActionsForGroup({ groupFolder: 'webbob' })).toEqual([]);
+  });
 });

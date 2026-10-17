@@ -56,7 +56,7 @@ function hasLoneUtf16Surrogate(text: string): boolean {
     const code = text.charCodeAt(i);
     if (code >= 0xd800 && code <= 0xdbff) {
       const next = text.charCodeAt(i + 1);
-      if (next < 0xdc00 || next > 0xdfff) return true;
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
       i++;
     } else if (code >= 0xdc00 && code <= 0xdfff) {
       return true;
