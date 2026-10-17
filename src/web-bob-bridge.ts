@@ -39,7 +39,6 @@ import {
   parseWebBobRequestScope,
   serializeWebBobRequestScope,
   type WebBobRequestScope,
-  WEB_BOB_OWNER_ACTOR,
 } from './web-bob-request-scope.js';
 
 export { canonicalWebBobAddress };
@@ -254,6 +253,17 @@ export class WebBobBridge {
     if (!columns.some((column) => column.name === 'requestDigest')) {
       this.db.exec('ALTER TABLE webbob_drafts ADD COLUMN requestDigest TEXT');
     }
+    if (!columns.some((column) => column.name === 'draftRequestId')) {
+      this.db.exec('ALTER TABLE webbob_drafts ADD COLUMN draftRequestId TEXT');
+      this.db.exec(
+        `UPDATE webbob_drafts SET draftRequestId = json_extract(requestScope, '$.draftRequestId')
+         WHERE draftRequestId IS NULL AND requestScope IS NOT NULL`,
+      );
+    }
+    this.db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS webbob_drafts_draft_request_id
+       ON webbob_drafts (draftRequestId) WHERE draftRequestId IS NOT NULL`,
+    );
     this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_delivery (
       draftId TEXT PRIMARY KEY, evidence TEXT NOT NULL
     )`);
@@ -375,12 +385,14 @@ export class WebBobBridge {
     );
     const parsed = parseDraftScope(value);
     const {
+      requestScope,
       scope,
       requestDigest,
       digest,
       requestScopeSerialized,
       scopeSerialized,
     } = parsed;
+    const draftRequestId = requestScope.draftRequestId;
     await this.validateRecipient(scope);
     requireValue(
       !isMessagingOutboundPaused(),
@@ -440,6 +452,24 @@ export class WebBobBridge {
           503,
           'Web Bob bridge pending draft limit reached.',
         );
+        for (const row of this.staged.values()) {
+          const previousRequest = JSON.parse(
+            row.requestScope,
+          ) as WebBobRequestScope;
+          requireValue(
+            previousRequest.draftRequestId !== draftRequestId,
+            409,
+            'This Web Bob draft request ID is already bound to another draft.',
+          );
+        }
+        const rebound = this.db
+          .prepare('SELECT id FROM webbob_drafts WHERE draftRequestId = ?')
+          .get(draftRequestId) as { id: string } | undefined;
+        requireValue(
+          !rebound,
+          409,
+          'This Web Bob draft request ID is already bound to another draft.',
+        );
         this.retention.prune(now);
       })
       .immediate();
@@ -459,7 +489,12 @@ export class WebBobBridge {
       requestScope: requestScopeSerialized,
       requestDigest,
       digest,
-      challengeHash: challengeHash(challenge, id, scope.revision, digest),
+      challengeHash: challengeHash(
+        challenge,
+        id,
+        scope.revision,
+        requestDigest,
+      ),
       serverEpoch: this.epoch,
       expires: now + TTL,
       pauseGeneration: fence.pauseGeneration,
@@ -518,13 +553,14 @@ export class WebBobBridge {
           });
           this.db
             .prepare(
-              'INSERT INTO webbob_drafts (id, scope, requestScope, requestDigest, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              'INSERT INTO webbob_drafts (id, scope, requestScope, requestDigest, draftRequestId, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             )
             .run(
               id,
               scopeSerialized,
               requestScopeSerialized,
               requestDigest,
+              draftRequestId,
               digest,
               staged.challengeHash,
               this.epoch,
@@ -840,7 +876,12 @@ export class WebBobBridge {
     );
     requireValue(
       secureEqual(
-        challengeHash(value.approvalToken, row.id, scope.revision, row.digest),
+        challengeHash(
+          value.approvalToken,
+          row.id,
+          scope.revision,
+          row.requestDigest,
+        ),
         row.challengeHash,
       ),
       403,

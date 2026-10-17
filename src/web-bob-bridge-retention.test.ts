@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -48,7 +48,7 @@ const draft = () => ({
   issuer: 'web-bob',
   audience: 'andrea',
   actor: 'b'.repeat(64),
-  draftRequestId: 'retention-request',
+  draftRequestId: 'retention-request-' + randomBytes(12).toString('hex'),
   conversationId: 'retention-conversation',
   epoch: 'retention-epoch',
   draftId: 'retention-draft',
@@ -191,11 +191,29 @@ describe('Web Bob bounded draft retention and replay protection', () => {
           .digest('hex');
         return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
       });
-      const requestScope = serializeWebBobRequestScope(
-        parseWebBobRequestScope(draft()),
+      const historyRequestBinding = (n: number) => {
+        const input = {
+          ...draft(),
+          draftRequestId: 'retention-req-' + n.toString(16).padStart(52, '0'),
+        };
+        const requestScope = parseWebBobRequestScope(input);
+        return {
+          requestScope: serializeWebBobRequestScope(requestScope),
+          requestDigest: computeWebBobRequestDigest(requestScope),
+          draftRequestId: requestScope.draftRequestId,
+        };
+      };
+      db.function(
+        'retentionRequestScope',
+        (n: number) => historyRequestBinding(n).requestScope,
       );
-      const requestDigest = computeWebBobRequestDigest(
-        parseWebBobRequestScope(draft()),
+      db.function(
+        'retentionRequestDigest',
+        (n: number) => historyRequestBinding(n).requestDigest,
+      );
+      db.function(
+        'retentionDraftRequestId',
+        (n: number) => historyRequestBinding(n).draftRequestId,
       );
       db.transaction(() => {
         db.prepare(
@@ -203,13 +221,15 @@ describe('Web Bob bounded draft retention and replay protection', () => {
             VALUES(?) UNION ALL SELECT n + 1 FROM entries WHERE n < ?
           )
           INSERT INTO webbob_drafts
-            (id, scope, requestScope, requestDigest, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId)
+            (id, scope, requestScope, requestDigest, draftRequestId, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId)
           SELECT printf('%064x', n),
             json_set(?,
               '$.conversationId', CASE WHEN ? THEN 'retention-conversation'
                 ELSE 'retention-history-' || n END,
               '$.revision', CASE WHEN ? THEN n ELSE 1 END),
-            ?, ?, '', '', '', ?, 0, ?, retentionActionId(printf('%064x', n)) FROM entries`,
+            retentionRequestScope(n), retentionRequestDigest(n),
+            retentionDraftRequestId(n), '', '', '', ?, 0, ?,
+            retentionActionId(printf('%064x', n)) FROM entries`,
         ).run(
           seededDrafts + 1,
           seededDrafts + count,
@@ -221,8 +241,6 @@ describe('Web Bob bounded draft retention and replay protection', () => {
           }),
           Number(sameLineage),
           Number(sameLineage),
-          requestScope,
-          requestDigest,
           expires,
           state,
         );

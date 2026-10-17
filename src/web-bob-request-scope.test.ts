@@ -48,4 +48,42 @@ describe('Web Bob request scope binding', () => {
       computeWebBobActionDigest(actionScope),
     );
   });
+
+  it('matches Web Bob Python reference digest for the golden scope vector', () => {
+    const scope = parseWebBobRequestScope({
+      issuer: 'web-bob',
+      audience: 'andrea',
+      actor: 'a'.repeat(64),
+      conversationId: 'conversation-123',
+      epoch: 'epoch-123',
+      draftId: 'draft-123',
+      revision: 7,
+      draftRequestId: 'request-123',
+      chatGuid: 'iMessage;-;+12025550102',
+      addresses: ['+12025550102'],
+      text: '  Café 🎸 "quoted" \\ back\ttab\nline\u0001ctl\u2028sep  ',
+    });
+    expect(computeWebBobRequestDigest(scope)).toBe(
+      '8e6a5e561b5fe14760b7127f1e6e16c380994e4d4692d1ef65377e030df4617e',
+    );
+  });
+
+  it('rejects non-canonical addresses without rewriting them', () => {
+    for (const address of ['(202) 555-0102', '+1 202 555 0102']) {
+      expect(() =>
+        parseWebBobRequestScope({ ...sample(), addresses: [address] }),
+      ).toThrow();
+    }
+    const scope = parseWebBobRequestScope(sample());
+    expect(scope.addresses).toEqual(['+12025550102']);
+  });
+
+  it('rejects caller-supplied digest keys and lone UTF-16 surrogates', () => {
+    expect(() =>
+      parseWebBobRequestScope({ ...sample(), requestDigest: 'a'.repeat(64) }),
+    ).toThrow();
+    expect(() =>
+      parseWebBobRequestScope({ ...sample(), text: 'broken \ud800 surrogate' }),
+    ).toThrow();
+  });
 });

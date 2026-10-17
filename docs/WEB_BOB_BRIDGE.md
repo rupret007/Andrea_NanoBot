@@ -45,10 +45,19 @@ constant-time comparison. The token expires with the draft after five minutes.
 
 Successful draft responses include a separate `requestDigest` for the immutable
 original Web Bob scope (caller `actor` and `draftRequestId` included). The
-action `digest` remains Andrea's normalized scope hash. Confirm, cancel and
-status require `bridgeDraftId` and the expected `requestDigest`; Andrea
-compares that digest against the stored original request before consuming
-approval or dispatching.
+action `digest` remains Andrea's normalized scope hash. `requestDigest` is
+computed from the exact request bytes Web Bob sent: addresses must already be
+canonical (Andrea rejects rewritable forms such as `(202) 555-0102`), body text
+is never trimmed or normalized for hashing, and lone UTF-16 surrogates are
+rejected. `/draft` accepts only the eleven scope fields; caller-supplied
+`requestDigest` or `digest` keys are refused. Each `draftRequestId` binds at most
+one stored draft for the life of the bridge database; a second `/draft` that
+reuses an existing ID is rejected with 409 before any new owner challenge is
+delivered. Owner approval tokens are hashed with the stored `requestDigest`, not
+the action digest, so an approval minted for one request cannot validate against
+a record whose immutable request changed. Confirm, cancel and status require
+`bridgeDraftId` and the expected `requestDigest`; Andrea compares that digest
+against the stored original request before consuming approval or dispatching.
 
 `POST .../confirm` accepts only `bridgeDraftId`, `requestDigest` and
 `approvalToken`. It rejects

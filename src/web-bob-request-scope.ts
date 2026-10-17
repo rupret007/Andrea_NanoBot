@@ -25,6 +25,46 @@ export class WebBobRequestScopeError extends Error {
   }
 }
 
+/** Exact draft body keys accepted on protocol-2 `/draft`. */
+export const WEB_BOB_DRAFT_SCOPE_KEYS = [
+  'issuer',
+  'audience',
+  'actor',
+  'conversationId',
+  'epoch',
+  'draftId',
+  'revision',
+  'draftRequestId',
+  'chatGuid',
+  'addresses',
+  'text',
+] as const;
+
+export function assertWebBobDraftInputKeys(
+  value: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(value)) {
+    requireScope(
+      (WEB_BOB_DRAFT_SCOPE_KEYS as readonly string[]).includes(key),
+      'Invalid Web Bob request.',
+    );
+  }
+}
+
+function hasLoneUtf16Surrogate(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function requireScope(
   ok: unknown,
   message = 'Invalid Web Bob request.',
@@ -66,6 +106,7 @@ export function computeWebBobRequestDigest(scope: WebBobRequestScope): string {
 export function parseWebBobRequestScope(
   value: Record<string, unknown>,
 ): WebBobRequestScope {
+  assertWebBobDraftInputKeys(value);
   requireScope(value.issuer === ISSUER && value.audience === AUDIENCE);
   for (const key of [
     'actor',
@@ -89,14 +130,18 @@ export function parseWebBobRequestScope(
   requireScope(
     typeof value.text === 'string' &&
       value.text.trim() &&
-      value.text.length <= 4000,
+      value.text.length <= 4000 &&
+      !hasLoneUtf16Surrogate(value.text),
   );
   requireScope(
     Array.isArray(value.addresses) &&
       value.addresses.length === 1 &&
       typeof value.addresses[0] === 'string',
   );
-  const addresses = (value.addresses as string[]).map(canonicalWebBobAddress);
+  const addresses = value.addresses as string[];
+  for (const address of addresses) {
+    requireScope(canonicalWebBobAddress(address) === address);
+  }
   return {
     issuer: ISSUER,
     audience: AUDIENCE,
