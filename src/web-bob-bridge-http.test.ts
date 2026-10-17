@@ -13,6 +13,14 @@ import { WebBobBridge } from './web-bob-bridge.js';
 const routes = ['draft', 'confirm', 'cancel', 'status'] as const;
 type Route = (typeof routes)[number];
 const token = 'synthetic-http-bridge-token-1234567890';
+function deeplyNestedJsonBody(depth: number): string {
+  let value = '0';
+  for (let index = 0; index < depth; index += 1) {
+    value = `{"n":${value}}`;
+  }
+  return `{"nested":${value}}`;
+}
+
 const draft = () => ({
   issuer: 'web-bob',
   audience: 'andrea',
@@ -226,6 +234,18 @@ describe('Web Bob JSON security at the HTTP boundary', () => {
     expect(deliver.mock.calls[0][1]).toMatchObject({ text, revision: 1 });
     expect(send).not.toHaveBeenCalled();
     expect(readDelivery).not.toHaveBeenCalled();
+  });
+
+  it('returns HTTP 400 for a body nested beyond the accepted depth', async () => {
+    const raw = deeplyNestedJsonBody(3000);
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(24000);
+    const response = await post('draft', raw);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Invalid JSON.' });
+    expect(deliver).not.toHaveBeenCalled();
+    expect(resolveRecipient).not.toHaveBeenCalled();
+    expect(readDelivery).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('rejects an escaped trailing high surrogate before preparing a draft', async () => {
