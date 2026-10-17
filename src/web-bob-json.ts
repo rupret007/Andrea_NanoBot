@@ -12,8 +12,12 @@ type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+// Bound recursive descent even when deeply nested input fits the byte limit.
+// Count the root object as a container; scalar values do not add depth.
+const MAX_JSON_NESTING_DEPTH = 64;
+
 export function parseWebBobJsonBody(text: string): Record<string, unknown> {
-  const parsed = parseJsonValue(text, 0);
+  const parsed = parseJsonValue(text, 0, 0);
   const index = skipWs(text, parsed.index);
   if (index !== text.length) throw new WebBobJsonParseError();
   const value = parsed.value;
@@ -26,12 +30,17 @@ export function parseWebBobJsonBody(text: string): Record<string, unknown> {
 function parseJsonValue(
   text: string,
   index: number,
+  depth: number,
 ): { value: JsonValue; index: number } {
   index = skipWs(text, index);
   if (index >= text.length) throw new WebBobJsonParseError();
   const char = text[index];
-  if (char === '{') return parseObject(text, index);
-  if (char === '[') return parseArray(text, index);
+  if (char === '{' || char === '[') {
+    if (depth >= MAX_JSON_NESTING_DEPTH) throw new WebBobJsonParseError();
+    return char === '{'
+      ? parseObject(text, index, depth + 1)
+      : parseArray(text, index, depth + 1);
+  }
   if (char === '"') return parseString(text, index);
   if (char === 't') return parseLiteral(text, index, 'true', true);
   if (char === 'f') return parseLiteral(text, index, 'false', false);
@@ -44,6 +53,7 @@ function parseJsonValue(
 function parseObject(
   text: string,
   index: number,
+  depth: number,
 ): { value: JsonValue; index: number } {
   index = skipWs(text, index + 1);
   const object: Record<string, JsonValue> = Object.create(null);
@@ -65,7 +75,7 @@ function parseObject(
     index = skipWs(text, index);
     if (text[index] !== ':') throw new WebBobJsonParseError();
     const valueStart = skipWs(text, index + 1);
-    const value = parseJsonValue(text, valueStart);
+    const value = parseJsonValue(text, valueStart, depth);
     // Validate the wire spelling before Number erases fractions/exponents.
     if (
       key.value === 'revision' &&
@@ -85,12 +95,13 @@ function parseObject(
 function parseArray(
   text: string,
   index: number,
+  depth: number,
 ): { value: JsonValue; index: number } {
   index = skipWs(text, index + 1);
   const array: JsonValue[] = [];
   if (text[index] === ']') return { value: array, index: index + 1 };
   while (true) {
-    const value = parseJsonValue(text, index);
+    const value = parseJsonValue(text, index, depth);
     array.push(value.value);
     index = skipWs(text, value.index);
     if (text[index] === ']') return { value: array, index: index + 1 };
