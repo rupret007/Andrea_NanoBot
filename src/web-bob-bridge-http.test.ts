@@ -92,7 +92,7 @@ describe('Web Bob JSON security at the HTTP boundary', () => {
     if (route === 'draft') return draft();
     const response = await post('draft', JSON.stringify(draft()));
     expect(response.status).toBe(200);
-    const card = await response.json();
+    const card = (await response.json()) as Record<string, unknown>;
     expect(deliver).toHaveBeenCalledOnce();
     const approvalToken = deliver.mock.calls[0][0];
     deliver.mockClear();
