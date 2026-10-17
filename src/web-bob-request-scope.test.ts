@@ -9,6 +9,7 @@ import {
   parseWebBobRequestScope,
   serializeWebBobRequestScope,
   WEB_BOB_OWNER_ACTOR,
+  WebBobRequestScopeError,
 } from './web-bob-request-scope.js';
 
 const sample = () => ({
@@ -86,4 +87,20 @@ describe('Web Bob request scope binding', () => {
       parseWebBobRequestScope({ ...sample(), text: 'broken \ud800 surrogate' }),
     ).toThrow();
   });
+
+  it.each(['\ud800', 'text\udbff', 'emoji \ud83c\udfb8\ud800'])(
+    'rejects text ending with an unpaired high surrogate: %j',
+    (text) => {
+      expect(() => parseWebBobRequestScope({ ...sample(), text })).toThrow(
+        WebBobRequestScopeError,
+      );
+    },
+  );
+
+  it.each(['text\ud83c\udfb8', '\ud800\udc00', '\udbff\udfff'])(
+    'preserves text ending with a valid surrogate pair: %j',
+    (text) => {
+      expect(parseWebBobRequestScope({ ...sample(), text }).text).toBe(text);
+    },
+  );
 });
