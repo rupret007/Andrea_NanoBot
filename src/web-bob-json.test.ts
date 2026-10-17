@@ -15,6 +15,15 @@ function nestedBody(kind: 'array' | 'object' | 'mixed', depth: number): string {
 
 describe('Web Bob JSON ingress', () => {
   it.each(['array', 'object', 'mixed'] as const)(
+    'parses JSON at exactly the accepted max container depth without throwing',
+    (kind) => {
+      const atMaxDepth = nestedBody(kind, 63);
+      expect(() => parseWebBobJsonBody(atMaxDepth)).not.toThrow();
+      expect(parseWebBobJsonBody(atMaxDepth)).toEqual(JSON.parse(atMaxDepth));
+    },
+  );
+
+  it.each(['array', 'object', 'mixed'] as const)(
     'bounds %s nesting while accepting the 64-container boundary',
     (kind) => {
       const accepted = nestedBody(kind, 63);
