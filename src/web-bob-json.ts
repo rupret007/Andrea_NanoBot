@@ -46,20 +46,34 @@ function parseObject(
   index: number,
 ): { value: JsonValue; index: number } {
   index = skipWs(text, index + 1);
-  const object: Record<string, JsonValue> = {};
+  const object: Record<string, JsonValue> = Object.create(null);
   const keys = new Set<string>();
   if (text[index] === '}') return { value: object, index: index + 1 };
   while (true) {
     index = skipWs(text, index);
     const key = parseString(text, index);
     index = key.index;
-    if (keys.has(key.value)) {
+    if (
+      key.value === '__proto__' ||
+      key.value === 'constructor' ||
+      key.value === 'prototype' ||
+      keys.has(key.value)
+    ) {
       throw new WebBobJsonParseError();
     }
     keys.add(key.value);
     index = skipWs(text, index);
     if (text[index] !== ':') throw new WebBobJsonParseError();
-    const value = parseJsonValue(text, index + 1);
+    const valueStart = skipWs(text, index + 1);
+    const value = parseJsonValue(text, valueStart);
+    // Validate the wire spelling before Number erases fractions/exponents.
+    if (
+      key.value === 'revision' &&
+      typeof value.value === 'number' &&
+      !/^-?(?:0|[1-9][0-9]*)$/.test(text.slice(valueStart, value.index))
+    ) {
+      throw new WebBobJsonParseError();
+    }
     object[key.value] = value.value;
     index = skipWs(text, value.index);
     if (text[index] === '}') return { value: object, index: index + 1 };
@@ -171,6 +185,13 @@ function parseLiteral(
 }
 
 function skipWs(text: string, index: number): number {
-  while (index < text.length && /\s/.test(text[index])) index += 1;
+  while (
+    text[index] === ' ' ||
+    text[index] === '\t' ||
+    text[index] === '\r' ||
+    text[index] === '\n'
+  ) {
+    index += 1;
+  }
   return index;
 }

@@ -40,22 +40,28 @@ generates the draft request ID itself; caller-provided actor and draft request
 IDs do not establish identity or authority. It stores the exact body bytes,
 recipient, actor, conversation, Web Bob process epoch, draft ID/revision and
 server-generated request ID. A 32-byte random approval token is hashed together
-with the stored draft ID, revision and content digest, then verified using a
+with the stored draft ID, revision, action digest and request digest, then verified using a
 constant-time comparison. The token expires with the draft after five minutes.
 
 Successful draft responses include a separate `requestDigest` for the immutable
 original Web Bob scope (caller `actor` and `draftRequestId` included). The
 action `digest` remains Andrea's normalized scope hash. `requestDigest` is
-computed from the exact request bytes Web Bob sent: addresses must already be
+computed from the exact scope values Web Bob sent, serialized in protocol field
+order as compact JSON: addresses must already be
 canonical (Andrea rejects rewritable forms such as `(202) 555-0102`), body text
 is never trimmed or normalized for hashing, and lone UTF-16 surrogates are
 rejected. `/draft` accepts only the eleven scope fields; caller-supplied
-`requestDigest` or `digest` keys are refused. Each `draftRequestId` binds at most
-one stored draft for the life of the bridge database; a second `/draft` that
-reuses an existing ID is rejected with 409 before any new owner challenge is
-delivered. Owner approval tokens are hashed with the stored `requestDigest`, not
-the action digest, so an approval minted for one request cannot validate against
-a record whose immutable request changed. Confirm, cancel and status require
+`requestDigest` or `digest` keys are refused. JSON objects reject `__proto__`,
+`constructor` and `prototype` keys at every nesting level, including escaped
+spellings. Only JSON space, tab, CR and LF are accepted outside strings;
+revisions must use integer notation, so `1.0` and `1e0` are refused.
+Each `draftRequestId` binds at most one retained stored or staged draft; a second
+`/draft` that reuses an existing ID is rejected with 409 before any new owner
+challenge is delivered. IDs may be reused after the associated records are
+pruned; persistent revision watermarks still reject stale draft revisions.
+Owner approval tokens are hashed with both the stored action `digest` and
+`requestDigest`, so an approval minted for one request cannot validate against
+a record whose immutable request or action changed. Confirm, cancel and status require
 `bridgeDraftId` and the expected `requestDigest`; Andrea compares that digest
 against the stored original request before consuming approval or dispatching.
 
@@ -166,8 +172,9 @@ The protocol is `GET /web-bob/v1/health`, then `POST .../draft`, followed by
 request scope for `requestDigest`, then substitutes its fixed owner actor and
 generated draft request ID only for the normalized action digest and dispatch.
 Confirmation requires
-`{"bridgeDraftId":"...","approvalToken":"..."}` and no additional fields.
-`POST .../status` and `POST .../cancel` accept only `{"bridgeDraftId":"..."}`.
+`{"bridgeDraftId":"...","requestDigest":"...","approvalToken":"..."}` and no additional fields.
+`POST .../status` and `POST .../cancel` accept only
+`{"bridgeDraftId":"...","requestDigest":"..."}`.
 Status inspects the stored draft without sending, including one whose
 confirmation was already consumed.
 Health advertises `protocol: 2` for the incompatible confirmation contract.

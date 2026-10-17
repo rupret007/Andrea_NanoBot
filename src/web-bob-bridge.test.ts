@@ -1448,6 +1448,131 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('pins the owner token to the content hash independently of scope equality', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      const original = db
+        .prepare('SELECT scope, digest FROM webbob_drafts WHERE id = ?')
+        .get(input.bridgeDraftId) as { scope: string; digest: string };
+      const changed = JSON.parse(original.scope);
+      // The normalized actor may differ from the caller's actor. Changing only
+      // it keeps the cross-scope equality checks valid but changes the hash.
+      changed.actor = 'b'.repeat(64);
+      const digest = computeWebBobActionDigest(changed);
+      expect(digest).not.toBe(original.digest);
+      db.prepare(
+        'UPDATE webbob_drafts SET scope = ?, digest = ? WHERE id = ?',
+      ).run(serializeWebBobRequestScope(changed), digest, input.bridgeDraftId);
+      expect((await bridge.status(identity(input))).state).toBe('pending');
+      resolve.mockClear();
+      await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+        status: 403,
+        message: 'Invalid Web Bob request.',
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      db.prepare(
+        'UPDATE webbob_drafts SET scope = ?, digest = ? WHERE id = ?',
+      ).run(original.scope, original.digest, input.bridgeDraftId);
+      await bridge.confirm(confirmation(input));
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('pins the owner token to requestDigest independently of the content hash', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      const original = db
+        .prepare(
+          'SELECT requestScope, requestDigest FROM webbob_drafts WHERE id = ?',
+        )
+        .get(input.bridgeDraftId) as {
+        requestScope: string;
+        requestDigest: string;
+      };
+      const changed = JSON.parse(original.requestScope);
+      // Caller actor bytes belong to requestDigest but are normalized away
+      // from the action, so its content hash and equality checks still pass.
+      changed.actor = 'b'.repeat(64);
+      const requestDigest = computeWebBobRequestDigest(changed);
+      expect(requestDigest).not.toBe(original.requestDigest);
+      db.prepare(
+        'UPDATE webbob_drafts SET requestScope = ?, requestDigest = ? WHERE id = ?',
+      ).run(
+        serializeWebBobRequestScope(changed),
+        requestDigest,
+        input.bridgeDraftId,
+      );
+      const changedInput = { ...input, requestDigest };
+      expect((await bridge.status(identity(changedInput))).state).toBe(
+        'pending',
+      );
+      resolve.mockClear();
+      await expect(
+        bridge.confirm(confirmation(changedInput)),
+      ).rejects.toMatchObject({
+        status: 403,
+        message: 'Invalid Web Bob request.',
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      db.prepare(
+        'UPDATE webbob_drafts SET requestScope = ?, requestDigest = ? WHERE id = ?',
+      ).run(original.requestScope, original.requestDigest, input.bridgeDraftId);
+      await bridge.confirm(confirmation(input));
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('pins action and request scope equality even when both hashes are valid', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      const original = db
+        .prepare('SELECT scope, digest FROM webbob_drafts WHERE id = ?')
+        .get(input.bridgeDraftId) as { scope: string; digest: string };
+      const changed = JSON.parse(original.scope);
+      changed.text = 'Different action text with a valid recomputed hash.';
+      db.prepare(
+        'UPDATE webbob_drafts SET scope = ?, digest = ? WHERE id = ?',
+      ).run(
+        serializeWebBobRequestScope(changed),
+        computeWebBobActionDigest(changed),
+        input.bridgeDraftId,
+      );
+      // Status and cancellation never check an owner token: only scope equality
+      // can reject these independently valid hashes for different messages.
+      await expect(bridge.status(identity(input))).rejects.toMatchObject({
+        status: 403,
+        message: 'This operation does not match the stored draft.',
+      });
+      expect(() => bridge.cancel(identity(input))).toThrowError(
+        'This operation does not match the stored draft.',
+      );
+      expect(send).not.toHaveBeenCalled();
+      db.prepare(
+        'UPDATE webbob_drafts SET scope = ?, digest = ? WHERE id = ?',
+      ).run(original.scope, original.digest, input.bridgeDraftId);
+      expect((await bridge.status(identity(input))).state).toBe('pending');
+      await bridge.confirm(confirmation(input));
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      db.close();
+    }
+  });
+
   it.each([
     'draft id',
     'revision',
@@ -1737,17 +1862,64 @@ describe('Web Bob dedicated Andrea ingress', () => {
       expect(send).toHaveBeenCalledOnce();
     });
 
+    it.each(['staged', 'stored'])(
+      'refuses a draft request ID already bound to a %s draft before delivering another challenge',
+      async (state) => {
+        const posted = draft();
+        let finish = () => {};
+        if (state === 'staged') {
+          deliver.mockImplementationOnce(
+            (token, summary) =>
+              new Promise<void>((resolve) => {
+                delivered.set(summary.bridgeDraftId, token);
+                finish = resolve;
+              }),
+          );
+        }
+        const preparing = bridge.prepare(posted);
+        const settled = preparing.catch(() => undefined);
+        await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+        const [approvalToken, summary] = deliver.mock.calls[0];
+        if (state === 'stored') await preparing;
+        const first = {
+          bridgeDraftId: summary.bridgeDraftId,
+          approvalToken,
+          requestDigest: requestDigestFor(posted),
+        };
+        expect((await bridge.status(identity(first))).state).toBe(
+          state === 'staged' ? 'awaiting_delivery' : 'pending',
+        );
+        deliver.mockClear();
+        delivered.clear();
+        try {
+          await expect(
+            bridge.prepare({
+              ...posted,
+              conversationId: 'conversation-rebound',
+              draftId: 'draft-rebound',
+              text: 'Different body for the same request id.',
+            }),
+          ).rejects.toMatchObject({
+            status: 409,
+            message:
+              'This Web Bob draft request ID is already bound to another draft.',
+          });
+          expect(deliver).not.toHaveBeenCalled();
+          expect(delivered.size).toBe(0);
+          expect(send).not.toHaveBeenCalled();
+        } finally {
+          finish();
+          await settled;
+        }
+        await preparing;
+        expect((await bridge.status(identity(first))).state).toBe('pending');
+        await bridge.confirm(confirmation(first));
+        expect(send).toHaveBeenCalledOnce();
+      },
+    );
+
     it('refuses replayed and cross-bound confirmations without double send', async () => {
       const first = await approval();
-      const deliverBeforeReplay = deliver.mock.calls.length;
-      await expect(
-        bridge.prepare({
-          ...draft(),
-          draftRequestId: first.draftRequestId,
-          text: 'Different body for the same request id.',
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-      expect(deliver.mock.calls.length).toBe(deliverBeforeReplay);
       await bridge.confirm(confirmation(first));
       expect(send).toHaveBeenCalledOnce();
       await expect(bridge.confirm(confirmation(first))).rejects.toMatchObject({
