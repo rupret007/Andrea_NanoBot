@@ -43,7 +43,15 @@ server-generated request ID. A 32-byte random approval token is hashed together
 with the stored draft ID, revision and content digest, then verified using a
 constant-time comparison. The token expires with the draft after five minutes.
 
-`POST .../confirm` accepts only `bridgeDraftId` and `approvalToken`. It rejects
+Successful draft responses include a separate `requestDigest` for the immutable
+original Web Bob scope (caller `actor` and `draftRequestId` included). The
+action `digest` remains Andrea's normalized scope hash. Confirm, cancel and
+status require `bridgeDraftId` and the expected `requestDigest`; Andrea
+compares that digest against the stored original request before consuming
+approval or dispatching.
+
+`POST .../confirm` accepts only `bridgeDraftId`, `requestDigest` and
+`approvalToken`. It rejects
 caller-supplied actor, scope, approval timestamp, request IDs and legacy
 confirmation text. Andrea loads the scope from its stored draft, timestamps
 approval using its own clock, and generates and persists the confirmation
@@ -145,8 +153,9 @@ do not create either production file, change a service pin, or send any text.
 The protocol is `GET /web-bob/v1/health`, then `POST .../draft`, followed by
 `POST .../confirm` or `POST .../cancel`. Draft requests provide `issuer`,
 `audience`, `conversationId`, `epoch`, `draftId`, `revision`, `chatGuid`,
-`addresses` and `text`. Caller-provided `actor` and `draftRequestId` are ignored
-in favor of Andrea's fixed owner actor and generated draft request ID.
+`addresses`, `text`, `actor` and `draftRequestId`. Andrea persists the exact
+request scope for `requestDigest`, then substitutes its fixed owner actor and
+generated draft request ID only for the normalized action digest and dispatch.
 Confirmation requires
 `{"bridgeDraftId":"...","approvalToken":"..."}` and no additional fields.
 `POST .../status` and `POST .../cancel` accept only `{"bridgeDraftId":"..."}`.

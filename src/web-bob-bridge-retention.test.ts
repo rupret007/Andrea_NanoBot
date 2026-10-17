@@ -18,6 +18,11 @@ import type {
   OwnerChallengeSummary,
 } from './owner-challenge-delivery.js';
 import { WebBobBridge, type WebBobDeliveryEvidence } from './web-bob-bridge.js';
+import {
+  computeWebBobRequestDigest,
+  parseWebBobRequestScope,
+  serializeWebBobRequestScope,
+} from './web-bob-request-scope.js';
 import type { WebBobDraftRetentionLimits } from './web-bob-draft-retention.js';
 
 /** Small caps exercise the same prune/reconcile paths without 10k-row fixtures. */
@@ -42,6 +47,8 @@ const config = {
 const draft = () => ({
   issuer: 'web-bob',
   audience: 'andrea',
+  actor: 'b'.repeat(64),
+  draftRequestId: 'retention-request',
   conversationId: 'retention-conversation',
   epoch: 'retention-epoch',
   draftId: 'retention-draft',
@@ -184,19 +191,25 @@ describe('Web Bob bounded draft retention and replay protection', () => {
           .digest('hex');
         return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
       });
+      const requestScope = serializeWebBobRequestScope(
+        parseWebBobRequestScope(draft()),
+      );
+      const requestDigest = computeWebBobRequestDigest(
+        parseWebBobRequestScope(draft()),
+      );
       db.transaction(() => {
         db.prepare(
           `WITH RECURSIVE entries(n) AS (
             VALUES(?) UNION ALL SELECT n + 1 FROM entries WHERE n < ?
           )
           INSERT INTO webbob_drafts
-            (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId)
+            (id, scope, requestScope, requestDigest, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId)
           SELECT printf('%064x', n),
             json_set(?,
               '$.conversationId', CASE WHEN ? THEN 'retention-conversation'
                 ELSE 'retention-history-' || n END,
               '$.revision', CASE WHEN ? THEN n ELSE 1 END),
-            '', '', '', ?, 0, ?, retentionActionId(printf('%064x', n)) FROM entries`,
+            ?, ?, '', '', '', ?, 0, ?, retentionActionId(printf('%064x', n)) FROM entries`,
         ).run(
           seededDrafts + 1,
           seededDrafts + count,
@@ -208,6 +221,8 @@ describe('Web Bob bounded draft retention and replay protection', () => {
           }),
           Number(sameLineage),
           Number(sameLineage),
+          requestScope,
+          requestDigest,
           expires,
           state,
         );
@@ -251,7 +266,11 @@ describe('Web Bob bounded draft retention and replay protection', () => {
     const bridgeDraftId = card.draftId as string;
     const approvalToken = delivered.get(bridgeDraftId)!;
     expect(approvalToken).toMatch(/^wbtxt-[a-f0-9]{64}$/);
-    return { bridgeDraftId, approvalToken };
+    return {
+      bridgeDraftId,
+      approvalToken,
+      requestDigest: card.requestDigest as string,
+    };
   }
 
   async function withHttp(
@@ -477,6 +496,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
           bridge.confirm({
             bridgeDraftId: replacement.bridgeDraftId,
             approvalToken: original.approvalToken,
+            requestDigest: replacement.requestDigest,
           }),
         ).rejects.toMatchObject({ status: 403 });
       }
@@ -496,6 +516,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
     );
     const inspection = bridge.status({
       bridgeDraftId: original.bridgeDraftId,
+      requestDigest: original.requestDigest,
     });
     inspect((db) => {
       db.prepare('UPDATE webbob_drafts SET expires = 1 WHERE id = ?').run(
@@ -522,7 +543,10 @@ describe('Web Bob bounded draft retention and replay protection', () => {
 
   it('bounds both databases through delivered revision churn, cancellation, supersession and restart', async () => {
     const original = await approval();
-    bridge.cancel({ bridgeDraftId: original.bridgeDraftId });
+    bridge.cancel({
+      bridgeDraftId: original.bridgeDraftId,
+      requestDigest: original.requestDigest,
+    });
     inspect((db) => {
       db.prepare('UPDATE webbob_drafts SET expires = 1 WHERE id = ?').run(
         original.bridgeDraftId,
@@ -537,7 +561,10 @@ describe('Web Bob bounded draft retention and replay protection', () => {
         revision: TERMINAL_DRAFT_LIMIT + index,
       });
       if (index % 2 === 1)
-        bridge.cancel({ bridgeDraftId: current.bridgeDraftId });
+        bridge.cancel({
+          bridgeDraftId: current.bridgeDraftId,
+          requestDigest: current.requestDigest,
+        });
       if (index % 32 === 31) {
         expect(counts().terminal).toBeLessThanOrEqual(TERMINAL_DRAFT_LIMIT);
         expect(counts().drafts).toBeLessThanOrEqual(TERMINAL_DRAFT_LIMIT + 1);
@@ -575,7 +602,13 @@ describe('Web Bob bounded draft retention and replay protection', () => {
     expect(counts().drafts).toBe(0);
     expectCoreMatchesBridge();
     await expect(
-      bridge.confirm({ bridgeDraftId, approvalToken }),
+      bridge.confirm({
+        bridgeDraftId,
+        approvalToken,
+        requestDigest: computeWebBobRequestDigest(
+          parseWebBobRequestScope(draft()),
+        ),
+      }),
     ).rejects.toMatchObject({ status: 404 });
     expect(send).not.toHaveBeenCalled();
   });
@@ -828,7 +861,10 @@ describe('Web Bob bounded draft retention and replay protection', () => {
 
   it('bounds revision history and seals unknown lineages across restart when legacy history overflows', async () => {
     const original = await approval();
-    bridge.cancel({ bridgeDraftId: original.bridgeDraftId });
+    bridge.cancel({
+      bridgeDraftId: original.bridgeDraftId,
+      requestDigest: original.requestDigest,
+    });
     seedHistory('cancelled', REVISION_LINEAGE_LIMIT + 1);
     restart();
 
@@ -873,6 +909,7 @@ describe('Web Bob bounded draft retention and replay protection', () => {
         bridge.confirm({
           bridgeDraftId: replacement.bridgeDraftId,
           approvalToken: original.approvalToken,
+          requestDigest: replacement.requestDigest,
         }),
       ).rejects.toMatchObject({ status: 403 });
       restart();

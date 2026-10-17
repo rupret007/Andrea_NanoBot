@@ -25,6 +25,12 @@ import type {
 } from './owner-challenge-delivery.js';
 import { setMessagingOutboundPaused } from './messaging-outbound-pause.js';
 import { isWebBobLoopbackAddress, WebBobBridge } from './web-bob-bridge.js';
+import {
+  computeWebBobActionDigest,
+  computeWebBobRequestDigest,
+  parseWebBobRequestScope,
+  serializeWebBobRequestScope,
+} from './web-bob-request-scope.js';
 
 const config = {
   token: 'test-service-token-'.repeat(4),
@@ -44,6 +50,8 @@ const draft = () => ({
   addresses: ['+12025550102'],
   text: 'Exact owner text.\nSecond line.',
 });
+const requestDigestFor = (input = draft()) =>
+  computeWebBobRequestDigest(parseWebBobRequestScope(input));
 
 describe('Web Bob dedicated Andrea ingress', () => {
   let folder: string;
@@ -72,18 +80,25 @@ describe('Web Bob dedicated Andrea ingress', () => {
     return {
       ...input,
       bridgeDraftId: card.draftId,
+      requestDigest: card.requestDigest as string,
       approvalToken: delivered.get(card.draftId as string)!,
     };
   };
   const confirmation = (input: {
     bridgeDraftId: unknown;
     approvalToken: string;
+    requestDigest: string;
   }) => ({
     bridgeDraftId: input.bridgeDraftId,
     approvalToken: input.approvalToken,
+    requestDigest: input.requestDigest,
   });
-  const identity = (input: { bridgeDraftId: unknown }) => ({
+  const identity = (input: {
+    bridgeDraftId: unknown;
+    requestDigest: string;
+  }) => ({
     bridgeDraftId: input.bridgeDraftId,
+    requestDigest: input.requestDigest,
   });
   const withHttp = async (
     run: (
@@ -105,7 +120,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
             Authorization: 'Bearer ' + config.token,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(body),
+          body: typeof body === 'string' ? body : JSON.stringify(body),
         }),
       );
     } finally {
@@ -118,6 +133,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
     );
     try {
       const input = draft();
+      const requestScope = serializeWebBobRequestScope(
+        parseWebBobRequestScope(input),
+      );
+      const requestDigest = computeWebBobRequestDigest(
+        parseWebBobRequestScope(input),
+      );
       // History represents delivered drafts in both stores, with actual core
       // actions and outcomes rather than empty references that bypass cleanup.
       db.function('historyActionId', (id: string, conversationId: string) => {
@@ -144,9 +165,9 @@ describe('Web Bob dedicated Andrea ingress', () => {
           VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < ?
         )
         INSERT INTO webbob_drafts
-          (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId, confirmationRequestId)
+          (id, scope, requestScope, requestDigest, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId, confirmationRequestId)
         SELECT printf('%064x', n), json_set(?, '$.conversationId', 'history-' || n),
-          '', '', '', ?, 0, ?,
+          ?, ?, '', '', '', ?, 0, ?,
           historyActionId(printf('%064x', n), 'history-' || n), NULL
         FROM entries`,
       ).run(
@@ -157,6 +178,8 @@ describe('Web Bob dedicated Andrea ingress', () => {
             .update('web-bob:owner:jeff')
             .digest('hex'),
         }),
+        requestScope,
+        requestDigest,
         expires,
         state,
       );
@@ -213,6 +236,16 @@ describe('Web Bob dedicated Andrea ingress', () => {
     fs.rmSync(folder, { recursive: true, force: true });
   });
 
+  it('rejects duplicate JSON keys on ingress before schema validation', async () => {
+    await withHttp(async (post) => {
+      const response = await post(
+        'draft',
+        '{"issuer":"web-bob","issuer":"web-bob","audience":"andrea"}',
+      );
+      expect(response.status).toBe(400);
+    });
+  });
+
   it('gives the bearer caller only a draft reference and delivers the token exclusively out of band', async () => {
     await withHttp(async (post) => {
       const response = await post('draft', draft());
@@ -234,7 +267,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
       for (const field of ['challenge', 'approvalToken', 'confirmation']) {
         expect(card).not.toHaveProperty(field);
       }
-      const draftIdentity = { bridgeDraftId: card.draftId };
+      expect(card.requestDigest).toMatch(/^[a-f0-9]{64}$/);
+      expect(card.requestDigest).not.toBe(card.digest);
+      const draftIdentity = {
+        bridgeDraftId: card.draftId,
+        requestDigest: card.requestDigest,
+      };
       expect((await post('confirm', draftIdentity)).status).toBe(403);
       expect(
         (
@@ -361,6 +399,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
         bridge.confirm({
           bridgeDraftId: '0'.repeat(64),
           approvalToken: 'wbtxt-' + '0'.repeat(64),
+          requestDigest: '0'.repeat(64),
         }),
       ).rejects.toMatchObject({ status: 404 });
     } finally {
@@ -387,11 +426,17 @@ describe('Web Bob dedicated Andrea ingress', () => {
           await post('confirm', {
             bridgeDraftId: summary.bridgeDraftId,
             approvalToken: token,
+            requestDigest: requestDigestFor(),
           })
         ).status,
       ).toBe(409);
       expect(
-        (await bridge.status({ bridgeDraftId: summary.bridgeDraftId })).state,
+        (
+          await bridge.status({
+            bridgeDraftId: summary.bridgeDraftId,
+            requestDigest: requestDigestFor(),
+          })
+        ).state,
       ).toBe('approval_unavailable');
     });
     expect(send).not.toHaveBeenCalled();
@@ -411,7 +456,10 @@ describe('Web Bob dedicated Andrea ingress', () => {
       const rejected = expect(preparing).rejects.toThrow();
       await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
       const [token, summary] = deliver.mock.calls[0];
-      const draftIdentity = { bridgeDraftId: summary.bridgeDraftId };
+      const draftIdentity = {
+        bridgeDraftId: summary.bridgeDraftId,
+        requestDigest: requestDigestFor(),
+      };
       expect((await bridge.status(draftIdentity)).state).toBe(
         'awaiting_delivery',
       );
@@ -646,6 +694,48 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('rejects confirmation when requestDigest does not match the stored original request', async () => {
+    const input = await approval();
+    await expect(
+      bridge.confirm({
+        ...confirmation(input),
+        requestDigest: 'f'.repeat(64),
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does not authorize dispatch when the approval token matches a different requestDigest', async () => {
+    const first = await approval();
+    const second = await approval({ ...draft(), draftId: 'draft-456' });
+    await expect(
+      bridge.confirm({
+        bridgeDraftId: first.bridgeDraftId,
+        approvalToken: first.approvalToken,
+        requestDigest: second.requestDigest,
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rejects legacy persisted drafts that lack requestDigest evidence', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      db.prepare(
+        'UPDATE webbob_drafts SET requestDigest = ?, requestScope = ? WHERE id = ?',
+      ).run('', '', input.bridgeDraftId);
+    } finally {
+      db.close();
+    }
+    await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('requires the separately delivered owner token and rejects legacy first-request approval', async () => {
     const input = await approval();
     await expect(
@@ -655,7 +745,10 @@ describe('Web Bob dedicated Andrea ingress', () => {
       }),
     ).rejects.toMatchObject({ status: 400 });
     await expect(
-      bridge.confirm({ bridgeDraftId: input.bridgeDraftId }),
+      bridge.confirm({
+        bridgeDraftId: input.bridgeDraftId,
+        requestDigest: input.requestDigest,
+      }),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
       bridge.confirm({
@@ -1346,20 +1439,24 @@ describe('Web Bob dedicated Andrea ingress', () => {
         if (changed === 'revision') scope.revision += 1;
         if (changed === 'content hash')
           scope.text = 'Changed exact message bytes.';
-        const serialized = JSON.stringify(scope);
+        const serialized = serializeWebBobRequestScope(scope);
         db.prepare(
           'UPDATE webbob_drafts SET id = ?, scope = ?, digest = ? WHERE id = ?',
         ).run(
           bridgeDraftId,
           serialized,
-          createHash('sha256').update(serialized).digest('hex'),
+          computeWebBobActionDigest(scope),
           input.bridgeDraftId,
         );
       } finally {
         db.close();
       }
       await expect(
-        bridge.confirm({ bridgeDraftId, approvalToken: input.approvalToken }),
+        bridge.confirm({
+          bridgeDraftId,
+          approvalToken: input.approvalToken,
+          requestDigest: input.requestDigest,
+        }),
       ).rejects.toMatchObject({ status: 403 });
       expect(send).not.toHaveBeenCalled();
     },
