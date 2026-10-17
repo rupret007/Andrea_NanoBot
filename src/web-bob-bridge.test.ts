@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -25,6 +25,12 @@ import type {
 } from './owner-challenge-delivery.js';
 import { setMessagingOutboundPaused } from './messaging-outbound-pause.js';
 import { isWebBobLoopbackAddress, WebBobBridge } from './web-bob-bridge.js';
+import {
+  computeWebBobActionDigest,
+  computeWebBobRequestDigest,
+  parseWebBobRequestScope,
+  serializeWebBobRequestScope,
+} from './web-bob-request-scope.js';
 
 const config = {
   token: 'test-service-token-'.repeat(4),
@@ -39,11 +45,13 @@ const draft = () => ({
   epoch: 'epoch-123',
   draftId: 'draft-123',
   revision: 1,
-  draftRequestId: 'request-123',
+  draftRequestId: 'request-' + randomBytes(12).toString('hex'),
   chatGuid: 'iMessage;-;+12025550102',
   addresses: ['+12025550102'],
   text: 'Exact owner text.\nSecond line.',
 });
+const requestDigestFor = (input = draft()) =>
+  computeWebBobRequestDigest(parseWebBobRequestScope(input));
 
 describe('Web Bob dedicated Andrea ingress', () => {
   let folder: string;
@@ -72,18 +80,25 @@ describe('Web Bob dedicated Andrea ingress', () => {
     return {
       ...input,
       bridgeDraftId: card.draftId,
+      requestDigest: card.requestDigest as string,
       approvalToken: delivered.get(card.draftId as string)!,
     };
   };
   const confirmation = (input: {
     bridgeDraftId: unknown;
     approvalToken: string;
+    requestDigest: string;
   }) => ({
     bridgeDraftId: input.bridgeDraftId,
     approvalToken: input.approvalToken,
+    requestDigest: input.requestDigest,
   });
-  const identity = (input: { bridgeDraftId: unknown }) => ({
+  const identity = (input: {
+    bridgeDraftId: unknown;
+    requestDigest: string;
+  }) => ({
     bridgeDraftId: input.bridgeDraftId,
+    requestDigest: input.requestDigest,
   });
   const withHttp = async (
     run: (
@@ -105,12 +120,24 @@ describe('Web Bob dedicated Andrea ingress', () => {
             Authorization: 'Bearer ' + config.token,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(body),
+          body: typeof body === 'string' ? body : JSON.stringify(body),
         }),
       );
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  };
+  const historyRequestBinding = (n: number) => {
+    const input = {
+      ...draft(),
+      draftRequestId: 'history-req-' + n.toString(16).padStart(56, '0'),
+    };
+    const requestScope = parseWebBobRequestScope(input);
+    return {
+      requestScope: serializeWebBobRequestScope(requestScope),
+      requestDigest: computeWebBobRequestDigest(requestScope),
+      draftRequestId: requestScope.draftRequestId,
+    };
   };
   const seedHistory = async (state: string, expires: number, count = 10000) => {
     const db = new (await import('better-sqlite3')).default(
@@ -118,6 +145,18 @@ describe('Web Bob dedicated Andrea ingress', () => {
     );
     try {
       const input = draft();
+      db.function(
+        'historyRequestScope',
+        (n: number) => historyRequestBinding(n).requestScope,
+      );
+      db.function(
+        'historyRequestDigest',
+        (n: number) => historyRequestBinding(n).requestDigest,
+      );
+      db.function(
+        'historyDraftRequestId',
+        (n: number) => historyRequestBinding(n).draftRequestId,
+      );
       // History represents delivered drafts in both stores, with actual core
       // actions and outcomes rather than empty references that bypass cleanup.
       db.function('historyActionId', (id: string, conversationId: string) => {
@@ -144,8 +183,9 @@ describe('Web Bob dedicated Andrea ingress', () => {
           VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < ?
         )
         INSERT INTO webbob_drafts
-          (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId, confirmationRequestId)
+          (id, scope, requestScope, requestDigest, draftRequestId, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId, confirmationRequestId)
         SELECT printf('%064x', n), json_set(?, '$.conversationId', 'history-' || n),
+          historyRequestScope(n), historyRequestDigest(n), historyDraftRequestId(n),
           '', '', '', ?, 0, ?,
           historyActionId(printf('%064x', n), 'history-' || n), NULL
         FROM entries`,
@@ -213,6 +253,16 @@ describe('Web Bob dedicated Andrea ingress', () => {
     fs.rmSync(folder, { recursive: true, force: true });
   });
 
+  it('rejects duplicate JSON keys on ingress before schema validation', async () => {
+    await withHttp(async (post) => {
+      const response = await post(
+        'draft',
+        '{"issuer":"web-bob","issuer":"web-bob","audience":"andrea"}',
+      );
+      expect(response.status).toBe(400);
+    });
+  });
+
   it('gives the bearer caller only a draft reference and delivers the token exclusively out of band', async () => {
     await withHttp(async (post) => {
       const response = await post('draft', draft());
@@ -234,7 +284,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
       for (const field of ['challenge', 'approvalToken', 'confirmation']) {
         expect(card).not.toHaveProperty(field);
       }
-      const draftIdentity = { bridgeDraftId: card.draftId };
+      expect(card.requestDigest).toMatch(/^[a-f0-9]{64}$/);
+      expect(card.requestDigest).not.toBe(card.digest);
+      const draftIdentity = {
+        bridgeDraftId: card.draftId,
+        requestDigest: card.requestDigest,
+      };
       expect((await post('confirm', draftIdentity)).status).toBe(403);
       expect(
         (
@@ -361,6 +416,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
         bridge.confirm({
           bridgeDraftId: '0'.repeat(64),
           approvalToken: 'wbtxt-' + '0'.repeat(64),
+          requestDigest: '0'.repeat(64),
         }),
       ).rejects.toMatchObject({ status: 404 });
     } finally {
@@ -376,7 +432,9 @@ describe('Web Bob dedicated Andrea ingress', () => {
       throw new Error('Delivery secret: ' + token);
     });
     await withHttp(async (post) => {
-      const response = await post('draft', draft());
+      const posted = draft();
+      const requestDigest = requestDigestFor(posted);
+      const response = await post('draft', posted);
       expect(response.status).toBe(503);
       const body = await response.text();
       const [token, summary] = deliver.mock.calls[0];
@@ -387,11 +445,17 @@ describe('Web Bob dedicated Andrea ingress', () => {
           await post('confirm', {
             bridgeDraftId: summary.bridgeDraftId,
             approvalToken: token,
+            requestDigest,
           })
         ).status,
       ).toBe(409);
       expect(
-        (await bridge.status({ bridgeDraftId: summary.bridgeDraftId })).state,
+        (
+          await bridge.status({
+            bridgeDraftId: summary.bridgeDraftId,
+            requestDigest,
+          })
+        ).state,
       ).toBe('approval_unavailable');
     });
     expect(send).not.toHaveBeenCalled();
@@ -407,11 +471,15 @@ describe('Web Bob dedicated Andrea ingress', () => {
             finish = resolve;
           }),
       );
-      const preparing = bridge.prepare(draft());
+      const posted = draft();
+      const preparing = bridge.prepare(posted);
       const rejected = expect(preparing).rejects.toThrow();
       await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
       const [token, summary] = deliver.mock.calls[0];
-      const draftIdentity = { bridgeDraftId: summary.bridgeDraftId };
+      const draftIdentity = {
+        bridgeDraftId: summary.bridgeDraftId,
+        requestDigest: requestDigestFor(posted),
+      };
       expect((await bridge.status(draftIdentity)).state).toBe(
         'awaiting_delivery',
       );
@@ -425,7 +493,13 @@ describe('Web Bob dedicated Andrea ingress', () => {
           changedByChatJid: 'tg:main',
           reason: 'test',
         });
-      if (reason === 'supersede') await approval({ ...draft(), revision: 2 });
+      if (reason === 'supersede')
+        await approval({
+          ...posted,
+          revision: 2,
+          draftRequestId: 'request-supersede-' + randomBytes(8).toString('hex'),
+          text: 'Superseding exact owner text.',
+        });
       if (reason === 'expire') {
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(Date.now() + 5 * 60_000 + 1);
@@ -646,6 +720,48 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('rejects confirmation when requestDigest does not match the stored original request', async () => {
+    const input = await approval();
+    await expect(
+      bridge.confirm({
+        ...confirmation(input),
+        requestDigest: 'f'.repeat(64),
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does not authorize dispatch when the approval token matches a different requestDigest', async () => {
+    const first = await approval();
+    const second = await approval({ ...draft(), draftId: 'draft-456' });
+    await expect(
+      bridge.confirm({
+        bridgeDraftId: first.bridgeDraftId,
+        approvalToken: first.approvalToken,
+        requestDigest: second.requestDigest,
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rejects legacy persisted drafts that lack requestDigest evidence', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      db.prepare(
+        'UPDATE webbob_drafts SET requestDigest = ?, requestScope = ? WHERE id = ?',
+      ).run('', '', input.bridgeDraftId);
+    } finally {
+      db.close();
+    }
+    await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('requires the separately delivered owner token and rejects legacy first-request approval', async () => {
     const input = await approval();
     await expect(
@@ -655,7 +771,10 @@ describe('Web Bob dedicated Andrea ingress', () => {
       }),
     ).rejects.toMatchObject({ status: 400 });
     await expect(
-      bridge.confirm({ bridgeDraftId: input.bridgeDraftId }),
+      bridge.confirm({
+        bridgeDraftId: input.bridgeDraftId,
+        requestDigest: input.requestDigest,
+      }),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
       bridge.confirm({
@@ -1329,7 +1448,138 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it.each(['draft id', 'revision', 'content hash'])(
+  it('pins the owner token to the content hash independently of scope equality', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      const original = db
+        .prepare('SELECT scope, digest FROM webbob_drafts WHERE id = ?')
+        .get(input.bridgeDraftId) as { scope: string; digest: string };
+      const changed = JSON.parse(original.scope);
+      // The normalized actor may differ from the caller's actor. Changing only
+      // it keeps the cross-scope equality checks valid but changes the hash.
+      changed.actor = 'b'.repeat(64);
+      const digest = computeWebBobActionDigest(changed);
+      expect(digest).not.toBe(original.digest);
+      db.prepare(
+        'UPDATE webbob_drafts SET scope = ?, digest = ? WHERE id = ?',
+      ).run(serializeWebBobRequestScope(changed), digest, input.bridgeDraftId);
+      expect((await bridge.status(identity(input))).state).toBe('pending');
+      resolve.mockClear();
+      await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+        status: 403,
+        message: 'Invalid Web Bob request.',
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      db.prepare(
+        'UPDATE webbob_drafts SET scope = ?, digest = ? WHERE id = ?',
+      ).run(original.scope, original.digest, input.bridgeDraftId);
+      await bridge.confirm(confirmation(input));
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('pins the owner token to requestDigest independently of the content hash', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      const original = db
+        .prepare(
+          'SELECT requestScope, requestDigest FROM webbob_drafts WHERE id = ?',
+        )
+        .get(input.bridgeDraftId) as {
+        requestScope: string;
+        requestDigest: string;
+      };
+      const changed = JSON.parse(original.requestScope);
+      // Caller actor bytes belong to requestDigest but are normalized away
+      // from the action, so its content hash and equality checks still pass.
+      changed.actor = 'b'.repeat(64);
+      const requestDigest = computeWebBobRequestDigest(changed);
+      expect(requestDigest).not.toBe(original.requestDigest);
+      db.prepare(
+        'UPDATE webbob_drafts SET requestScope = ?, requestDigest = ? WHERE id = ?',
+      ).run(
+        serializeWebBobRequestScope(changed),
+        requestDigest,
+        input.bridgeDraftId,
+      );
+      const changedInput = { ...input, requestDigest };
+      expect((await bridge.status(identity(changedInput))).state).toBe(
+        'pending',
+      );
+      resolve.mockClear();
+      await expect(
+        bridge.confirm(confirmation(changedInput)),
+      ).rejects.toMatchObject({
+        status: 403,
+        message: 'Invalid Web Bob request.',
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      db.prepare(
+        'UPDATE webbob_drafts SET requestScope = ?, requestDigest = ? WHERE id = ?',
+      ).run(original.requestScope, original.requestDigest, input.bridgeDraftId);
+      await bridge.confirm(confirmation(input));
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('pins action and request scope equality even when both hashes are valid', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    try {
+      const original = db
+        .prepare('SELECT scope, digest FROM webbob_drafts WHERE id = ?')
+        .get(input.bridgeDraftId) as { scope: string; digest: string };
+      const changed = JSON.parse(original.scope);
+      changed.text = 'Different action text with a valid recomputed hash.';
+      db.prepare(
+        'UPDATE webbob_drafts SET scope = ?, digest = ? WHERE id = ?',
+      ).run(
+        serializeWebBobRequestScope(changed),
+        computeWebBobActionDigest(changed),
+        input.bridgeDraftId,
+      );
+      // Status and cancellation never check an owner token: only scope equality
+      // can reject these independently valid hashes for different messages.
+      await expect(bridge.status(identity(input))).rejects.toMatchObject({
+        status: 403,
+        message: 'This operation does not match the stored draft.',
+      });
+      expect(() => bridge.cancel(identity(input))).toThrowError(
+        'This operation does not match the stored draft.',
+      );
+      expect(send).not.toHaveBeenCalled();
+      db.prepare(
+        'UPDATE webbob_drafts SET scope = ?, digest = ? WHERE id = ?',
+      ).run(original.scope, original.digest, input.bridgeDraftId);
+      expect((await bridge.status(identity(input))).state).toBe('pending');
+      await bridge.confirm(confirmation(input));
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([
+    'draft id',
+    'revision',
+    'content hash',
+    'action recipient',
+    'request body',
+  ])(
     'binds the owner token to the stored %s even when the scope digest is recomputed',
     async (changed) => {
       const input = await approval();
@@ -1339,27 +1589,46 @@ describe('Web Bob dedicated Andrea ingress', () => {
       let bridgeDraftId = input.bridgeDraftId;
       try {
         const row = db
-          .prepare('SELECT scope FROM webbob_drafts WHERE id = ?')
-          .get(bridgeDraftId) as { scope: string };
+          .prepare('SELECT scope, requestScope FROM webbob_drafts WHERE id = ?')
+          .get(bridgeDraftId) as { scope: string; requestScope: string };
         const scope = JSON.parse(row.scope);
         if (changed === 'draft id') bridgeDraftId = 'f'.repeat(64);
         if (changed === 'revision') scope.revision += 1;
         if (changed === 'content hash')
           scope.text = 'Changed exact message bytes.';
-        const serialized = JSON.stringify(scope);
-        db.prepare(
-          'UPDATE webbob_drafts SET id = ?, scope = ?, digest = ? WHERE id = ?',
-        ).run(
-          bridgeDraftId,
-          serialized,
-          createHash('sha256').update(serialized).digest('hex'),
-          input.bridgeDraftId,
-        );
+        if (changed === 'action recipient') {
+          scope.addresses = ['+12025550103'];
+          scope.chatGuid = 'iMessage;-;+12025550103';
+        }
+        if (changed === 'request body') {
+          const requestScope = JSON.parse(row.requestScope) as Record<
+            string,
+            unknown
+          >;
+          requestScope.text = 'Changed exact message bytes.';
+          db.prepare(
+            'UPDATE webbob_drafts SET requestScope = ? WHERE id = ?',
+          ).run(JSON.stringify(requestScope), input.bridgeDraftId);
+        } else {
+          const serialized = serializeWebBobRequestScope(scope);
+          db.prepare(
+            'UPDATE webbob_drafts SET id = ?, scope = ?, digest = ? WHERE id = ?',
+          ).run(
+            bridgeDraftId,
+            serialized,
+            computeWebBobActionDigest(scope),
+            input.bridgeDraftId,
+          );
+        }
       } finally {
         db.close();
       }
       await expect(
-        bridge.confirm({ bridgeDraftId, approvalToken: input.approvalToken }),
+        bridge.confirm({
+          bridgeDraftId,
+          approvalToken: input.approvalToken,
+          requestDigest: input.requestDigest,
+        }),
       ).rejects.toMatchObject({ status: 403 });
       expect(send).not.toHaveBeenCalled();
     },
@@ -1492,6 +1761,246 @@ describe('Web Bob dedicated Andrea ingress', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
     expect(send).not.toHaveBeenCalled();
+  });
+
+  describe('protocol-2 requestDigest binding', () => {
+    const goldenDraft = () => ({
+      issuer: 'web-bob',
+      audience: 'andrea',
+      actor: 'a'.repeat(64),
+      conversationId: 'conversation-123',
+      epoch: 'epoch-123',
+      draftId: 'draft-123',
+      revision: 7,
+      draftRequestId: 'request-123',
+      chatGuid: 'iMessage;-;+12025550102',
+      addresses: ['+12025550102'],
+      text: '  Café 🎸 "quoted" \\ back\ttab\nline\u0001ctl\u2028sep  ',
+    });
+
+    it('returns the golden requestDigest from prepare()', async () => {
+      const card = await bridge.prepare(goldenDraft());
+      expect(card.requestDigest).toBe(
+        '8e6a5e561b5fe14760b7127f1e6e16c380994e4d4692d1ef65377e030df4617e',
+      );
+      expect(card.requestDigest).not.toBe(card.digest);
+    });
+
+    it('refuses tampered request bodies and stored requestScope before dispatch', async () => {
+      const input = await approval();
+      const tamperedTextDigest = computeWebBobRequestDigest(
+        parseWebBobRequestScope({ ...draft(), text: draft().text + '!' }),
+      );
+      await expect(
+        bridge.confirm({
+          ...confirmation(input),
+          requestDigest: tamperedTextDigest,
+        }),
+      ).rejects.toMatchObject({
+        status: 403,
+      });
+      const tamperedAddressDigest = computeWebBobRequestDigest(
+        parseWebBobRequestScope({
+          ...draft(),
+          addresses: ['+12025550103'],
+          chatGuid: 'iMessage;-;+12025550103',
+        }),
+      );
+      await expect(
+        bridge.status({
+          bridgeDraftId: input.bridgeDraftId,
+          requestDigest: tamperedAddressDigest,
+        }),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(() =>
+        bridge.cancel({
+          bridgeDraftId: input.bridgeDraftId,
+          requestDigest: tamperedTextDigest,
+        }),
+      ).toThrowError('This operation does not match the stored draft.');
+      await expect(
+        bridge.status({
+          bridgeDraftId: input.bridgeDraftId,
+          requestDigest: tamperedTextDigest,
+        }),
+      ).rejects.toMatchObject({ status: 403 });
+      const db = new (await import('better-sqlite3')).default(
+        path.join(folder, 'bridge.db'),
+      );
+      let originalRequestScope = '';
+      try {
+        const row = db
+          .prepare('SELECT requestScope FROM webbob_drafts WHERE id = ?')
+          .get(input.bridgeDraftId) as { requestScope: string };
+        originalRequestScope = row.requestScope;
+        const requestScope = JSON.parse(row.requestScope) as Record<
+          string,
+          unknown
+        >;
+        requestScope.text = 'Tampered immutable request bytes.';
+        db.prepare(
+          'UPDATE webbob_drafts SET requestScope = ? WHERE id = ?',
+        ).run(JSON.stringify(requestScope), input.bridgeDraftId);
+      } finally {
+        db.close();
+      }
+      await expect(bridge.confirm(confirmation(input))).rejects.toMatchObject({
+        status: 403,
+      });
+      expect(send).not.toHaveBeenCalled();
+      const dbRestore = new (await import('better-sqlite3')).default(
+        path.join(folder, 'bridge.db'),
+      );
+      try {
+        dbRestore
+          .prepare('UPDATE webbob_drafts SET requestScope = ? WHERE id = ?')
+          .run(originalRequestScope, input.bridgeDraftId);
+      } finally {
+        dbRestore.close();
+      }
+      await bridge.confirm(confirmation(input));
+      expect(send).toHaveBeenCalledOnce();
+    });
+
+    it.each(['staged', 'stored'])(
+      'refuses a draft request ID already bound to a %s draft before delivering another challenge',
+      async (state) => {
+        const posted = draft();
+        let finish = () => {};
+        if (state === 'staged') {
+          deliver.mockImplementationOnce(
+            (token, summary) =>
+              new Promise<void>((resolve) => {
+                delivered.set(summary.bridgeDraftId, token);
+                finish = resolve;
+              }),
+          );
+        }
+        const preparing = bridge.prepare(posted);
+        const settled = preparing.catch(() => undefined);
+        await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+        const [approvalToken, summary] = deliver.mock.calls[0];
+        if (state === 'stored') await preparing;
+        const first = {
+          bridgeDraftId: summary.bridgeDraftId,
+          approvalToken,
+          requestDigest: requestDigestFor(posted),
+        };
+        expect((await bridge.status(identity(first))).state).toBe(
+          state === 'staged' ? 'awaiting_delivery' : 'pending',
+        );
+        deliver.mockClear();
+        delivered.clear();
+        try {
+          await expect(
+            bridge.prepare({
+              ...posted,
+              conversationId: 'conversation-rebound',
+              draftId: 'draft-rebound',
+              text: 'Different body for the same request id.',
+            }),
+          ).rejects.toMatchObject({
+            status: 409,
+            message:
+              'This Web Bob draft request ID is already bound to another draft.',
+          });
+          expect(deliver).not.toHaveBeenCalled();
+          expect(delivered.size).toBe(0);
+          expect(send).not.toHaveBeenCalled();
+        } finally {
+          finish();
+          await settled;
+        }
+        await preparing;
+        expect((await bridge.status(identity(first))).state).toBe('pending');
+        await bridge.confirm(confirmation(first));
+        expect(send).toHaveBeenCalledOnce();
+      },
+    );
+
+    it('refuses replayed and cross-bound confirmations without double send', async () => {
+      const first = await approval();
+      await bridge.confirm(confirmation(first));
+      expect(send).toHaveBeenCalledOnce();
+      await expect(bridge.confirm(confirmation(first))).rejects.toMatchObject({
+        status: 409,
+      });
+      expect(send).toHaveBeenCalledOnce();
+      const second = await approval({ ...draft(), draftId: 'draft-456' });
+      await expect(
+        bridge.confirm({
+          bridgeDraftId: first.bridgeDraftId,
+          approvalToken: first.approvalToken,
+          requestDigest: second.requestDigest,
+        }),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(send).toHaveBeenCalledOnce();
+    });
+
+    it('refuses missing or malformed requestDigest on confirm, cancel and status', async () => {
+      const input = await approval();
+      for (const requestDigest of [
+        undefined,
+        input.requestDigest.toUpperCase(),
+        input.requestDigest.slice(0, 63),
+        42,
+      ]) {
+        const bad = {
+          bridgeDraftId: input.bridgeDraftId,
+          ...(requestDigest === undefined ? {} : { requestDigest }),
+        };
+        await expect(
+          bridge.confirm({ ...bad, approvalToken: input.approvalToken }),
+        ).rejects.toMatchObject({
+          status: 400,
+        });
+        expect(() => bridge.cancel(bad)).toThrowError(
+          'Invalid Web Bob request.',
+        );
+        await expect(bridge.status(bad)).rejects.toMatchObject({ status: 400 });
+      }
+      expect(send).not.toHaveBeenCalled();
+      await bridge.confirm(confirmation(input));
+      expect(send).toHaveBeenCalledOnce();
+    });
+
+    it('accepts matching requestDigest and attests the stored original on receipts', async () => {
+      const body = draft();
+      const card = await bridge.prepare(body);
+      const expected = computeWebBobRequestDigest(
+        parseWebBobRequestScope(body),
+      );
+      expect(card.requestDigest).toBe(expected);
+      expect(card.requestDigest).not.toBe(card.digest);
+      const input = {
+        ...body,
+        bridgeDraftId: card.draftId,
+        requestDigest: card.requestDigest as string,
+        approvalToken: delivered.get(card.draftId as string)!,
+      };
+      const confirmed = await bridge.confirm(confirmation(input));
+      expect(confirmed.requestDigest).toBe(expected);
+      expect(send).toHaveBeenCalledOnce();
+      const status = await bridge.status(identity(input));
+      expect(status.requestDigest).toBe(expected);
+      expect(status.requestDigest).not.toBe(
+        computeWebBobRequestDigest(
+          parseWebBobRequestScope({ ...body, text: body.text + 'x' }),
+        ),
+      );
+    });
+
+    it('rejects non-canonical addresses and caller-supplied digest keys on draft', async () => {
+      for (const address of ['(202) 555-0102', '+1 202 555 0102']) {
+        await expect(
+          bridge.prepare({ ...draft(), addresses: [address] }),
+        ).rejects.toMatchObject({ status: 400 });
+      }
+      await expect(
+        bridge.prepare({ ...draft(), requestDigest: 'a'.repeat(64) }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(send).not.toHaveBeenCalled();
+    });
   });
 
   it.each([

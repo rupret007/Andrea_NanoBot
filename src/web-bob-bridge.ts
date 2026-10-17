@@ -29,23 +29,32 @@ import {
   DisabledOwnerChallengeDelivery,
   type OwnerChallengeDelivery,
 } from './owner-challenge-delivery.js';
+import { parseWebBobJsonBody, WebBobJsonParseError } from './web-bob-json.js';
+import {
+  WebBobRequestScopeError,
+  canonicalWebBobAddress,
+  computeWebBobActionDigest,
+  computeWebBobRequestDigest,
+  normalizeWebBobActionScope,
+  parseWebBobRequestScope,
+  serializeWebBobRequestScope,
+  type WebBobRequestScope,
+} from './web-bob-request-scope.js';
+
+export { canonicalWebBobAddress };
 
 const TTL = 5 * 60_000;
 const APPROVAL_TTL = 30_000;
 const PENDING_LIMIT = 10000;
-const ISSUER = 'web-bob';
-const AUDIENCE = 'andrea';
 const PREFIX = '/web-bob/v1/';
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-// This dedicated owner surface is for Jeff. Caller identity claims confer no
-// authority; only possession of the independently delivered approval can do so.
-const OWNER_ACTOR = hash('web-bob:owner:jeff');
 const challengeHash = (
   challenge: string,
   id: string,
   revision: number,
   digest: string,
+  requestDigest: string,
 ) =>
   hash(
     JSON.stringify([
@@ -53,6 +62,7 @@ const challengeHash = (
       id,
       revision,
       digest,
+      requestDigest,
       challenge,
     ]),
   );
@@ -98,23 +108,13 @@ export interface WebBobDeliveryEvidence {
   deliveredAt: number | null;
 }
 
-interface Scope {
-  issuer: string;
-  audience: string;
-  actor: string;
-  conversationId: string;
-  epoch: string;
-  draftId: string;
-  revision: number;
-  draftRequestId: string;
-  chatGuid: string;
-  addresses: string[];
-  text: string;
-}
+type Scope = WebBobRequestScope;
 
 interface StoredDraft {
   id: string;
   scope: string;
+  requestScope: string;
+  requestDigest: string;
   digest: string;
   challengeHash: string;
   serverEpoch: string;
@@ -143,56 +143,35 @@ function requireValue(
   if (!ok) throw new WebBobBridgeError(status, message);
 }
 
-export function canonicalWebBobAddress(value: string): string {
-  const clean = value.trim().toLowerCase();
-  if (/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(clean))
-    return clean;
-  requireValue(/^\+?[0-9 ().-]+$/.test(clean));
-  const digits = clean.replace(/\D/g, '');
-  requireValue(digits.length >= 10 && digits.length <= 15);
-  return '+' + (digits.length === 10 ? '1' : '') + digits;
-}
-
-function parseDraftScope(value: Record<string, unknown>): Scope {
-  requireValue(value.issuer === ISSUER && value.audience === AUDIENCE);
-  for (const key of ['conversationId', 'epoch', 'draftId']) {
-    requireValue(
-      typeof value[key] === 'string' &&
-        /^[a-zA-Z0-9_-]{8,128}$/.test(value[key] as string),
-    );
+function parseDraftScope(value: Record<string, unknown>): {
+  requestScope: WebBobRequestScope;
+  scope: Scope;
+  requestDigest: string;
+  digest: string;
+  requestScopeSerialized: string;
+  scopeSerialized: string;
+} {
+  try {
+    const requestScope = parseWebBobRequestScope(value);
+    const requestScopeSerialized = serializeWebBobRequestScope(requestScope);
+    const requestDigest = computeWebBobRequestDigest(requestScope);
+    const scope = normalizeWebBobActionScope(requestScope);
+    const scopeSerialized = serializeWebBobRequestScope(scope);
+    const digest = computeWebBobActionDigest(scope);
+    return {
+      requestScope,
+      scope,
+      requestDigest,
+      digest,
+      requestScopeSerialized,
+      scopeSerialized,
+    };
+  } catch (error) {
+    if (error instanceof WebBobRequestScopeError) {
+      throw new WebBobBridgeError(400, error.message);
+    }
+    throw error;
   }
-  requireValue(
-    Number.isSafeInteger(value.revision) && Number(value.revision) > 0,
-  );
-  requireValue(
-    typeof value.chatGuid === 'string' &&
-      /^(iMessage|SMS|RCS);-;[^;\s]{1,320}$/.test(value.chatGuid),
-  );
-  requireValue(
-    typeof value.text === 'string' &&
-      value.text.trim() &&
-      value.text.length <= 4000,
-  );
-  requireValue(
-    Array.isArray(value.addresses) &&
-      value.addresses.length === 1 &&
-      typeof value.addresses[0] === 'string',
-  );
-  const addresses = (value.addresses as string[]).map(canonicalWebBobAddress);
-  // Fixed field order binds exact bytes independently of input JSON ordering.
-  return {
-    issuer: ISSUER,
-    audience: AUDIENCE,
-    actor: OWNER_ACTOR,
-    conversationId: value.conversationId as string,
-    epoch: value.epoch as string,
-    draftId: value.draftId as string,
-    revision: value.revision as number,
-    draftRequestId: randomBytes(24).toString('hex'),
-    chatGuid: value.chatGuid,
-    addresses,
-    text: value.text,
-  };
 }
 
 /** Optional host integration; constructing it does not open a port or send.
@@ -245,7 +224,8 @@ export class WebBobBridge {
     this.db.pragma('synchronous = FULL');
     this.db.pragma('busy_timeout = 5000');
     this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_drafts (
-      id TEXT PRIMARY KEY, scope TEXT NOT NULL, digest TEXT NOT NULL,
+      id TEXT PRIMARY KEY, scope TEXT NOT NULL, requestScope TEXT NOT NULL,
+      requestDigest TEXT NOT NULL, digest TEXT NOT NULL,
       challengeHash TEXT NOT NULL, serverEpoch TEXT NOT NULL, expires INTEGER NOT NULL,
       pauseGeneration INTEGER NOT NULL, state TEXT NOT NULL, actionId TEXT NOT NULL,
       confirmationRequestId TEXT, approvedAt INTEGER
@@ -266,6 +246,26 @@ export class WebBobBridge {
         'ALTER TABLE webbob_drafts ADD COLUMN dispatchInFlight INTEGER NOT NULL DEFAULT 0 CHECK (dispatchInFlight IN (0, 1))',
       );
     }
+    const columns = this.db.pragma('table_info(webbob_drafts)') as {
+      name: string;
+    }[];
+    if (!columns.some((column) => column.name === 'requestScope')) {
+      this.db.exec('ALTER TABLE webbob_drafts ADD COLUMN requestScope TEXT');
+    }
+    if (!columns.some((column) => column.name === 'requestDigest')) {
+      this.db.exec('ALTER TABLE webbob_drafts ADD COLUMN requestDigest TEXT');
+    }
+    if (!columns.some((column) => column.name === 'draftRequestId')) {
+      this.db.exec('ALTER TABLE webbob_drafts ADD COLUMN draftRequestId TEXT');
+      this.db.exec(
+        `UPDATE webbob_drafts SET draftRequestId = json_extract(requestScope, '$.draftRequestId')
+         WHERE draftRequestId IS NULL AND requestScope IS NOT NULL`,
+      );
+    }
+    this.db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS webbob_drafts_draft_request_id
+       ON webbob_drafts (draftRequestId) WHERE draftRequestId IS NOT NULL`,
+    );
     this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_delivery (
       draftId TEXT PRIMARY KEY, evidence TEXT NOT NULL
     )`);
@@ -385,7 +385,16 @@ export class WebBobBridge {
       503,
       'Owner approval delivery is unavailable.',
     );
-    const scope = parseDraftScope(value);
+    const parsed = parseDraftScope(value);
+    const {
+      requestScope,
+      scope,
+      requestDigest,
+      digest,
+      requestScopeSerialized,
+      scopeSerialized,
+    } = parsed;
+    const draftRequestId = requestScope.draftRequestId;
     await this.validateRecipient(scope);
     requireValue(
       !isMessagingOutboundPaused(),
@@ -396,8 +405,6 @@ export class WebBobBridge {
       new Date(now).toISOString(),
     );
     requireValue(validateMessagingOutboundAuthorizationFence(fence).ok, 409);
-    const serialized = JSON.stringify(scope);
-    const digest = hash(serialized);
     // A pruned reference can never name a new action, even if a caller repeats
     // every input field. Revision watermarks independently reject stale input.
     const id = randomBytes(32).toString('hex');
@@ -447,6 +454,24 @@ export class WebBobBridge {
           503,
           'Web Bob bridge pending draft limit reached.',
         );
+        for (const row of this.staged.values()) {
+          const previousRequest = JSON.parse(
+            row.requestScope,
+          ) as WebBobRequestScope;
+          requireValue(
+            previousRequest.draftRequestId !== draftRequestId,
+            409,
+            'This Web Bob draft request ID is already bound to another draft.',
+          );
+        }
+        const rebound = this.db
+          .prepare('SELECT id FROM webbob_drafts WHERE draftRequestId = ?')
+          .get(draftRequestId) as { id: string } | undefined;
+        requireValue(
+          !rebound,
+          409,
+          'This Web Bob draft request ID is already bound to another draft.',
+        );
         this.retention.prune(now);
       })
       .immediate();
@@ -462,9 +487,17 @@ export class WebBobBridge {
     }
     const staged: StoredDraft = {
       id,
-      scope: serialized,
+      scope: scopeSerialized,
+      requestScope: requestScopeSerialized,
+      requestDigest,
       digest,
-      challengeHash: challengeHash(challenge, id, scope.revision, digest),
+      challengeHash: challengeHash(
+        challenge,
+        id,
+        scope.revision,
+        digest,
+        requestDigest,
+      ),
       serverEpoch: this.epoch,
       expires: now + TTL,
       pauseGeneration: fence.pauseGeneration,
@@ -523,11 +556,14 @@ export class WebBobBridge {
           });
           this.db
             .prepare(
-              'INSERT INTO webbob_drafts (id, scope, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              'INSERT INTO webbob_drafts (id, scope, requestScope, requestDigest, draftRequestId, digest, challengeHash, serverEpoch, expires, pauseGeneration, state, actionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             )
             .run(
               id,
-              serialized,
+              scopeSerialized,
+              requestScopeSerialized,
+              requestDigest,
+              draftRequestId,
               digest,
               staged.challengeHash,
               this.epoch,
@@ -544,6 +580,7 @@ export class WebBobBridge {
         ok: true,
         draftId: id,
         digest,
+        requestDigest,
         expiresAt: now + TTL,
         actionId: action.messageActionId,
       };
@@ -583,12 +620,18 @@ export class WebBobBridge {
     requireValue(
       Object.keys(value).every(
         (key) =>
-          key === 'bridgeDraftId' || (confirmation && key === 'approvalToken'),
+          key === 'bridgeDraftId' ||
+          key === 'requestDigest' ||
+          (confirmation && key === 'approvalToken'),
       ),
     );
     requireValue(
       typeof value.bridgeDraftId === 'string' &&
         /^[a-f0-9]{64}$/.test(value.bridgeDraftId),
+    );
+    requireValue(
+      typeof value.requestDigest === 'string' &&
+        /^[a-f0-9]{64}$/.test(value.requestDigest),
     );
     const row =
       (this.db
@@ -597,14 +640,46 @@ export class WebBobBridge {
       this.staged.get(value.bridgeDraftId);
     requireValue(row, 404, 'Unknown Web Bob draft.');
     requireValue(
+      typeof row.requestScope === 'string' &&
+        typeof row.requestDigest === 'string' &&
+        /^[a-f0-9]{64}$/.test(row.requestDigest) &&
+        secureEqual(row.requestDigest, value.requestDigest) &&
+        secureEqual(
+          computeWebBobRequestDigest(
+            JSON.parse(row.requestScope) as WebBobRequestScope,
+          ),
+          row.requestDigest,
+        ),
+      403,
+      'This operation does not match the stored draft.',
+    );
+    requireValue(
       typeof row.scope === 'string' &&
         typeof row.digest === 'string' &&
         /^[a-f0-9]{64}$/.test(row.digest) &&
-        secureEqual(hash(row.scope), row.digest),
+        secureEqual(
+          computeWebBobActionDigest(JSON.parse(row.scope) as Scope),
+          row.digest,
+        ),
       403,
       'This operation does not match the stored draft.',
     );
     const scope = JSON.parse(row.scope) as Scope;
+    const requestScope = JSON.parse(row.requestScope) as WebBobRequestScope;
+    requireValue(
+      scope.issuer === requestScope.issuer &&
+        scope.audience === requestScope.audience &&
+        scope.conversationId === requestScope.conversationId &&
+        scope.epoch === requestScope.epoch &&
+        scope.draftId === requestScope.draftId &&
+        scope.revision === requestScope.revision &&
+        scope.chatGuid === requestScope.chatGuid &&
+        scope.addresses.length === requestScope.addresses.length &&
+        scope.addresses.every((a, i) => a === requestScope.addresses[i]) &&
+        scope.text === requestScope.text,
+      403,
+      'This operation does not match the stored draft.',
+    );
     return { row, scope };
   }
 
@@ -692,6 +767,7 @@ export class WebBobBridge {
       ok: true,
       draftId: row.id,
       digest: row.digest,
+      requestDigest: row.requestDigest,
       actionId: row.actionId,
       state: verified
         ? delivery?.state || 'submitted'
@@ -818,7 +894,13 @@ export class WebBobBridge {
     );
     requireValue(
       secureEqual(
-        challengeHash(value.approvalToken, row.id, scope.revision, row.digest),
+        challengeHash(
+          value.approvalToken,
+          row.id,
+          scope.revision,
+          row.digest,
+          row.requestDigest,
+        ),
         row.challengeHash,
       ),
       403,
@@ -873,7 +955,7 @@ export class WebBobBridge {
         );
         const consumed = this.db
           .prepare(
-            "UPDATE webbob_drafts SET state = 'consumed', dispatchInFlight = 1, challengeHash = '', confirmationRequestId = ?, approvedAt = ? WHERE id = ? AND state = 'pending' AND serverEpoch = ? AND expires > ? AND digest = ? AND scope = ? AND challengeHash = ?",
+            "UPDATE webbob_drafts SET state = 'consumed', dispatchInFlight = 1, challengeHash = '', confirmationRequestId = ?, approvedAt = ? WHERE id = ? AND state = 'pending' AND serverEpoch = ? AND expires > ? AND requestDigest = ? AND digest = ? AND scope = ? AND requestScope = ? AND challengeHash = ?",
           )
           .run(
             confirmationRequestId,
@@ -881,8 +963,10 @@ export class WebBobBridge {
             row.id,
             this.epoch,
             validatedAt,
+            row.requestDigest,
             row.digest,
             row.scope,
+            row.requestScope,
             row.challengeHash,
           );
         requireValue(
@@ -1027,14 +1111,15 @@ export class WebBobBridge {
         requireValue(length <= 24000, 413);
         chunks.push(Buffer.from(data));
       }
-      let value: unknown;
+      let input: Record<string, unknown>;
       try {
-        value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      } catch {
-        throw new WebBobBridgeError(400, 'Invalid JSON.');
+        input = parseWebBobJsonBody(Buffer.concat(chunks).toString('utf8'));
+      } catch (error) {
+        if (error instanceof WebBobJsonParseError) {
+          throw new WebBobBridgeError(400, 'Invalid JSON.');
+        }
+        throw error;
       }
-      requireValue(value && typeof value === 'object' && !Array.isArray(value));
-      const input = value as Record<string, unknown>;
       const output =
         req.url === PREFIX + 'draft'
           ? await this.prepare(input)
