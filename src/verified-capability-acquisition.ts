@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   applyCapabilityAcquisitionTransitionCAS,
@@ -143,7 +144,21 @@ export function capabilitySandboxTargetScopeHash(sandboxRoot: string): string {
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error('Capability sandbox root must be a real directory.');
   }
-  if (!containedBy(temporaryRoot, root)) {
+  // A checkout or runtime workspace can itself live under the temporary root.
+  // Neither it nor any overlapping directory is a disposable sandbox.
+  const protectedRoots = [
+    realpathSync(process.cwd()),
+    realpathSync(fileURLToPath(new URL('../', import.meta.url))),
+  ];
+  if (
+    !containedBy(temporaryRoot, root) ||
+    protectedRoots.some(
+      (protectedRoot) =>
+        root === protectedRoot ||
+        containedBy(root, protectedRoot) ||
+        containedBy(protectedRoot, root),
+    )
+  ) {
     throw new Error(
       'Capability sandbox repository writes require a disposable temporary root.',
     );
