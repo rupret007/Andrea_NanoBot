@@ -22,14 +22,22 @@ Additional source-audit corrections incorporated before publication: identified 
 
 The review's phrase “acceptable to merge as a DRAFT docs PR” is a model recommendation, not merge authorization. This work opens a draft PR only. Jeff's decisions remain open; no runtime, send, deployment or parity activation is approved by this review.
 
-## Validation after fixes
+## Original design validation before sandbox hardening
 
 - Required local `npm run test:major:ci` passed on the unchanged source baseline with pinned Node 22.22.2: 306 files / 4,374 tests, formatting, typecheck, lint, synthetic certification and build. Live verification was not run (the repository CI command uses its documented `--skip-live-verify` mode).
 - `npm run docs:check` and `git diff --check` passed after documentation corrections.
-- Only the design and this critique record are changed; the bob-brain checkout remains read-only and clean.
 - Existing tests do not prove the proposed front door. New functionality and live acceptance remain the design's future milestone gates.
 
+## PR #57 runtime scope and validation
+
+PR #57 also includes runtime hardening in [verified-capability-acquisition.ts](../../src/verified-capability-acquisition.ts): a workspace or module repository root under the temporary directory, and directories overlapping either root, cannot qualify as a disposable capability sandbox. The PR therefore includes a runtime reliability/security fix alongside documentation.
+
+- `npm test` passed: 306 files / 4,374 tests, including all 25 capability acquisition tests, after restoring the workspace protection. No tests were changed.
+- `npm run docs:check` and `git diff --check` passed.
+
 ## Original Sonnet critique
+
+The preserved critique below reviewed the original documentation scope. Its “docs-only” wording predates the runtime sandbox fix described above.
 
 # Critique: `@andrea` conversational front door (docs-only)
 

@@ -6,6 +6,8 @@ published: false
 
 Status: proposed design; no runtime activation or permission grant. Audit date: 2026-10-17. Work ID: `andrea-at-front-door-doc`.
 
+PR #57 includes this design and review record plus a runtime sandbox safety fix in [verified-capability-acquisition.ts](../../src/verified-capability-acquisition.ts). `capabilitySandboxTargetScopeHash` rejects the current workspace, the module's repository root, and directories overlapping either, even when they are under the system temporary directory. This is a documentation and runtime reliability/security change. The proposed `@andrea` front door remains unimplemented.
+
 People texting Jeff should be able to address Andrea, ask questions, and request approved work. Andrea should use Web Bob's reasoning, task and safety substrate, with a conversation scope appropriate to that sender. An `@andrea` mention requests attention; it does not authorize a send, impersonation, access to Jeff's private context, or an external action.
 
 **Jeff's rule remains binding: every message sent on his behalf requires his per-message permission.** Whether a visibly identified Andrea reply in Jeff's thread can ever use a standing grant is an **OPEN DECISION for Jeff**, including apparently harmless acknowledgments. Until he decides, all contact-thread output is draft-only and held for his exact approval. This document does not grant exceptions.
