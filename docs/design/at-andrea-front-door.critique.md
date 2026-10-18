@@ -1,3 +1,7 @@
+---
+published: false
+---
+
 # Review record: `@andrea` front-door design
 
 Date: 2026-10-17. Review target: [at-andrea-front-door.md](at-andrea-front-door.md), pre-final draft plus a source-excerpt packet. The required command piped the document and selected source excerpts to `claude -p --model sonnet`; tools, MCP servers and hooks were disabled and session persistence was off. The reviewer could not browse or inspect additional files. No real messages, databases or credentials were provided. The critique below is preserved as returned; dispositions distinguish confirmed source facts from the reviewer's evidence limits.
